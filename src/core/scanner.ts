@@ -8,7 +8,8 @@ import { ScoringEngine } from './scoring';
 import { DedupEngine } from './dedup';
 import { VisionChecker } from './vision';
 
-const ISSUE_REF_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+const ISSUE_REF_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
+const LOOSE_ISSUE_REF = /#(\d+)/g;
 
 export class TreliqScanner {
   private config: TreliqConfig;
@@ -168,13 +169,21 @@ export class TreliqScanner {
           } catch { /* unknown */ }
         }
 
-        // Issue references
+        // Issue references (strong: fixes/closes/resolves, weak: related to, loose: any #123)
         const text = `${pr.title} ${pr.body ?? ''}`;
         const issueNumbers: number[] = [];
         let match: RegExpExecArray | null;
         const re = new RegExp(ISSUE_REF_PATTERN.source, 'gi');
         while ((match = re.exec(text)) !== null) {
           issueNumbers.push(parseInt(match[1], 10));
+        }
+        // Fallback: any #123 mention (loose ref)
+        if (issueNumbers.length === 0) {
+          const looseRe = new RegExp(LOOSE_ISSUE_REF.source, 'g');
+          while ((match = looseRe.exec(text)) !== null) {
+            const num = parseInt(match[1], 10);
+            if (num > 0 && num < 100000) issueNumbers.push(num);
+          }
         }
 
         prs.push({
