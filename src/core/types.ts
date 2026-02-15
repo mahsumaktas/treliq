@@ -13,6 +13,8 @@ export interface TreliqConfig {
   outputFormat: 'table' | 'json' | 'markdown';
   comment: boolean;           // Post results as PR comment
   trustContributors: boolean; // Exempt known contributors from spam detection
+  useCache: boolean;           // Use incremental cache (default: true)
+  cacheFile: string;           // Cache file path (default: '.treliq-cache.json')
 }
 
 export interface PRData {

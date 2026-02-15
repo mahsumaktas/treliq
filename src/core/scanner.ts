@@ -7,6 +7,7 @@ import type { TreliqConfig, PRData, ScoredPR, TreliqResult } from './types';
 import { ScoringEngine } from './scoring';
 import { DedupEngine } from './dedup';
 import { VisionChecker } from './vision';
+import { loadCache, saveCache, getCacheHit, type PRListItem } from './cache';
 
 const ISSUE_REF_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
 const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
@@ -16,6 +17,7 @@ export class TreliqScanner {
   private config: TreliqConfig;
   private octokit: Octokit;
   private scoring: ScoringEngine;
+  public shaMap = new Map<number, string>();
 
   constructor(config: TreliqConfig) {
     this.config = config;
@@ -27,16 +29,64 @@ export class TreliqScanner {
     const [owner, repo] = this.config.repo.split('/');
     console.error(`📡 Fetching open PRs from ${this.config.repo}...`);
 
-    // 1. Fetch PRs
-    const prs = await this.fetchPRs();
-    console.error(`   Found ${prs.length} open PRs`);
-
-    // 2. Score PRs
-    console.error('📊 Scoring PRs...');
-    const scored: ScoredPR[] = [];
-    for (const pr of prs) {
-      scored.push(await this.scoring.score(pr));
+    // 1. Try loading cache
+    const cache = this.config.useCache
+      ? loadCache(this.config.cacheFile, this.config.repo)
+      : null;
+    if (cache) {
+      console.error(`📦 Cache loaded (${Object.keys(cache.prs).length} PRs cached)`);
     }
+
+    // 2. Fetch PR list (lightweight if using cache)
+    let prs: PRData[];
+    let scored: ScoredPR[] = [];
+    let fromCache = 0;
+    let reScored = 0;
+    const shaMap = new Map<number, string>();
+
+    if (cache) {
+      // Fetch lightweight list first
+      const prList = await this.fetchPRList();
+      console.error(`   Found ${prList.length} open PRs`);
+
+      // Track shas for cache saving
+      for (const item of prList) shaMap.set(item.number, item.headSha);
+
+      // Check cache for each PR
+      const toFetch: number[] = [];
+      for (const item of prList) {
+        const cached = getCacheHit(cache, item);
+        if (cached) {
+          scored.push(cached);
+          fromCache++;
+        } else {
+          toFetch.push(item.number);
+        }
+      }
+
+      // Full fetch + score only changed/new PRs
+      if (toFetch.length > 0) {
+        console.error(`📊 Scoring ${toFetch.length} changed/new PRs (${fromCache} from cache)...`);
+        const freshPRs = await this.fetchPRDetails(toFetch);
+        for (const pr of freshPRs) {
+          scored.push(await this.scoring.score(pr));
+          reScored++;
+        }
+      } else {
+        console.error(`📊 All ${fromCache} PRs from cache, nothing to re-score`);
+      }
+    } else {
+      // No cache — full fetch (shas collected via this.shaMap in fetchPRs)
+      prs = await this.fetchPRs();
+      console.error(`   Found ${prs.length} open PRs`);
+      console.error('📊 Scoring PRs...');
+      for (const pr of prs) {
+        scored.push(await this.scoring.score(pr));
+        reScored++;
+      }
+    }
+
+    console.error(`   ✅ ${fromCache} PRs from cache, ${reScored} PRs re-scored`);
 
     // 3. Dedup
     let clusters = [] as import('./types').DedupCluster[];
@@ -87,21 +137,31 @@ export class TreliqScanner {
     const spamCount = scored.filter(p => p.isSpam).length;
 
     const summary = [
-      `Scanned ${prs.length} PRs in ${this.config.repo}`,
+      `Scanned ${scored.length} PRs in ${this.config.repo}`,
       `${spamCount} flagged as spam`,
       `${clusters.length} duplicate clusters found`,
       `Top PR: #${scored[0]?.number} (${scored[0]?.totalScore}/100) — ${scored[0]?.title}`,
     ].join('. ');
 
-    return {
+    const result: TreliqResult = {
       repo: this.config.repo,
       scannedAt: new Date().toISOString(),
-      totalPRs: prs.length,
+      totalPRs: scored.length,
       spamCount,
       duplicateClusters: clusters,
       rankedPRs: scored,
       summary,
     };
+
+    // Save cache
+    if (this.config.useCache) {
+      // Merge shaMap from fetchPRList and fetchPRs
+      for (const [k, v] of this.shaMap) shaMap.set(k, v);
+      saveCache(this.config.cacheFile, this.config.repo, scored, shaMap);
+      console.error(`💾 Cache saved to ${this.config.cacheFile}`);
+    }
+
+    return result;
   }
 
   async fetchPRs(): Promise<PRData[]> {
@@ -123,6 +183,9 @@ export class TreliqScanner {
 
       for (const pr of data) {
         if (prs.length >= this.config.maxPRs) break;
+
+        // Track sha for cache
+        this.shaMap.set(pr.number, pr.head.sha);
 
         // Fetch details for files + commits
         let filesChanged = 0;
@@ -247,6 +310,126 @@ export class TreliqScanner {
       page++;
     }
 
+    return prs;
+  }
+
+  /**
+   * Lightweight PR list fetch — only metadata needed for cache comparison
+   */
+  private async fetchPRList(): Promise<PRListItem[]> {
+    const [owner, repo] = this.config.repo.split('/');
+    const items: PRListItem[] = [];
+    let page = 1;
+
+    while (items.length < this.config.maxPRs) {
+      const { data } = await this.octokit.pulls.list({
+        owner, repo,
+        state: 'open',
+        per_page: 100,
+        page,
+        sort: 'updated',
+        direction: 'desc',
+      });
+      if (data.length === 0) break;
+      for (const pr of data) {
+        if (items.length >= this.config.maxPRs) break;
+        items.push({
+          number: pr.number,
+          updatedAt: pr.updated_at,
+          headSha: pr.head.sha,
+        });
+      }
+      page++;
+    }
+    return items;
+  }
+
+  /**
+   * Fetch full details for specific PR numbers
+   */
+  private async fetchPRDetails(prNumbers: number[]): Promise<PRData[]> {
+    const [owner, repo] = this.config.repo.split('/');
+    const prs: PRData[] = [];
+
+    for (const prNum of prNumbers) {
+      try {
+        const { data: pr } = await this.octokit.pulls.get({ owner, repo, pull_number: prNum });
+
+        const filesChanged = pr.changed_files;
+        const additions = pr.additions;
+        const deletions = pr.deletions;
+        const commits = pr.commits;
+        const mergeableState = pr.mergeable_state ?? 'unknown';
+        const commentCount = pr.comments ?? 0;
+
+        let changedFiles: string[] = [];
+        try {
+          const files = await this.octokit.pulls.listFiles({ owner, repo, pull_number: prNum, per_page: 100 });
+          changedFiles = files.data.map(f => f.filename);
+        } catch { /* skip */ }
+
+        let ciStatus: PRData['ciStatus'] = 'unknown';
+        try {
+          const checks = await this.octokit.checks.listForRef({ owner, repo, ref: pr.head.sha });
+          if (checks.data.total_count > 0) {
+            const conclusions = checks.data.check_runs.map(c => c.conclusion);
+            if (conclusions.every(c => c === 'success')) ciStatus = 'success';
+            else if (conclusions.some(c => c === 'failure')) ciStatus = 'failure';
+            else ciStatus = 'pending';
+          }
+        } catch {
+          try {
+            const status = await this.octokit.repos.getCombinedStatusForRef({ owner, repo, ref: pr.head.sha });
+            const stateMap: Record<string, PRData['ciStatus']> = { success: 'success', failure: 'failure', pending: 'pending' };
+            ciStatus = stateMap[status.data.state] ?? 'unknown';
+          } catch { /* unknown */ }
+        }
+
+        let reviewState: PRData['reviewState'] = 'none';
+        let reviewCount = 0;
+        try {
+          const { data: reviews } = await this.octokit.pulls.listReviews({ owner, repo, pull_number: prNum });
+          reviewCount = reviews.length;
+          const states = reviews.map(r => r.state);
+          if (states.includes('APPROVED')) reviewState = 'approved';
+          else if (states.includes('CHANGES_REQUESTED')) reviewState = 'changes_requested';
+          else if (states.some(s => s === 'COMMENTED')) reviewState = 'commented';
+        } catch { /* skip */ }
+
+        const testFilesChanged = changedFiles.filter(f => TEST_PATTERNS.some(p => p.test(f)));
+        const ageInDays = Math.floor((Date.now() - new Date(pr.created_at).getTime()) / (1000 * 60 * 60 * 24));
+        const mergeableMap: Record<string, PRData['mergeable']> = { clean: 'mergeable', unstable: 'mergeable', dirty: 'conflicting', blocked: 'mergeable' };
+        const mergeable: PRData['mergeable'] = mergeableMap[mergeableState] ?? 'unknown';
+
+        const text = `${pr.title} ${pr.body ?? ''}`;
+        const issueNumbers: number[] = [];
+        let match: RegExpExecArray | null;
+        const re = new RegExp(ISSUE_REF_PATTERN.source, 'gi');
+        while ((match = re.exec(text)) !== null) issueNumbers.push(parseInt(match[1], 10));
+        if (issueNumbers.length === 0) {
+          const looseRe = new RegExp(LOOSE_ISSUE_REF.source, 'g');
+          while ((match = looseRe.exec(text)) !== null) {
+            const num = parseInt(match[1], 10);
+            if (num > 0 && num < 100000) issueNumbers.push(num);
+          }
+        }
+
+        prs.push({
+          number: pr.number, title: pr.title, body: pr.body ?? '',
+          author: pr.user?.login ?? 'unknown', authorAssociation: pr.author_association,
+          createdAt: pr.created_at, updatedAt: pr.updated_at,
+          headRef: pr.head.ref, baseRef: pr.base.ref,
+          filesChanged, additions, deletions, commits,
+          labels: pr.labels.map((l: any) => (typeof l === 'string' ? l : l.name ?? '')),
+          ciStatus, hasIssueRef: issueNumbers.length > 0, issueNumbers,
+          changedFiles, diffUrl: pr.diff_url,
+          hasTests: testFilesChanged.length > 0, testFilesChanged,
+          ageInDays, mergeable, reviewState, reviewCount, commentCount,
+        });
+      } catch (err: any) {
+        console.error(`⚠️  Failed to fetch PR #${prNum}: ${err.message}`);
+      }
+    }
     return prs;
   }
 

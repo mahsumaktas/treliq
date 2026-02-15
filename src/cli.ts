@@ -19,6 +19,8 @@ function makeConfig(opts: any): TreliqConfig {
     outputFormat: opts.format ?? 'table',
     comment: opts.comment ?? false,
     trustContributors: opts.trustContributors ?? false,
+    useCache: opts.noCache ? false : true,
+    cacheFile: opts.cacheFile ?? '.treliq-cache.json',
   };
 }
 
@@ -101,6 +103,8 @@ program
   .option('-m, --max <number>', 'Max PRs to scan', '500')
   .option('--comment', 'Post results as PR comments', false)
   .option('--trust-contributors', 'Exempt known contributors from spam detection', false)
+  .option('--no-cache', 'Force full rescan, ignore cache')
+  .option('--cache-file <path>', 'Custom cache file path', '.treliq-cache.json')
   .action(async (opts) => {
     const config = makeConfig(opts);
     if (!config.token) {
