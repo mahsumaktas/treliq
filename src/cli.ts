@@ -38,10 +38,10 @@ function outputResult(result: TreliqResult, format: string) {
     console.log(`- **Spam:** ${result.spamCount}`);
     console.log(`- **Duplicate clusters:** ${result.duplicateClusters.length}\n`);
     console.log('## Top PRs\n');
-    console.log('| # | Score | Title | Author | Vision |');
-    console.log('|---|-------|-------|--------|--------|');
+    console.log('| # | Score | LLM | Risk | Title | Author | Vision | V.Score |');
+    console.log('|---|-------|-----|------|-------|--------|--------|---------|');
     for (const pr of result.rankedPRs.slice(0, 30)) {
-      console.log(`| #${pr.number} | ${pr.totalScore} | ${pr.title.slice(0, 50)} | @${pr.author} | ${pr.visionAlignment ?? '-'} |`);
+      console.log(`| #${pr.number} | ${pr.totalScore} | ${pr.llmScore ?? '-'} | ${pr.llmRisk ?? '-'} | ${pr.title.slice(0, 50)} | @${pr.author} | ${pr.visionAlignment ?? '-'} | ${pr.visionScore ?? '-'} |`);
     }
     if (result.duplicateClusters.length > 0) {
       console.log('\n## Duplicate Clusters\n');
@@ -61,9 +61,12 @@ function outputResult(result: TreliqResult, format: string) {
   const rows = result.rankedPRs.slice(0, 30).map(pr => ({
     '#': pr.number,
     Score: pr.totalScore,
-    Title: pr.title.slice(0, 55),
-    Author: pr.author.slice(0, 15),
+    LLM: pr.llmScore ?? '-',
+    Risk: pr.llmRisk ?? '-',
+    Title: pr.title.slice(0, 45),
+    Author: pr.author.slice(0, 12),
     CI: pr.ciStatus,
+    'V.Score': pr.visionScore ?? '-',
     Vision: pr.visionAlignment ?? '-',
     Spam: pr.isSpam ? '⚠️' : '✓',
     Dup: pr.duplicateGroup !== undefined ? `G${pr.duplicateGroup}` : '-',
@@ -83,7 +86,7 @@ function outputResult(result: TreliqResult, format: string) {
 program
   .name('treliq')
   .description('AI-Powered PR Triage for Open Source Maintainers')
-  .version('0.1.0');
+  .version('0.2.0');
 
 program
   .command('scan')
@@ -146,7 +149,7 @@ program
       diffUrl: pr.diff_url,
     };
 
-    const engine = new ScoringEngine();
+    const engine = new ScoringEngine(config.geminiApiKey);
     const scored = await engine.score(prData);
 
     if (opts.format === 'json') {
@@ -177,7 +180,7 @@ program
     const scanner = new TreliqScanner(config);
     const prs = await scanner.fetchPRs();
     console.log(`📊 Scoring ${prs.length} PRs...`);
-    const engine = new ScoringEngine();
+    const engine = new ScoringEngine(config.geminiApiKey);
     const scored: ScoredPR[] = [];
     for (const pr of prs) scored.push(await engine.score(pr));
 

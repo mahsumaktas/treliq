@@ -6,6 +6,8 @@ import type { ScoredPR } from './types';
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
+async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
 export class VisionChecker {
   private visionDoc: string;
   private geminiApiKey: string;
@@ -17,21 +19,20 @@ export class VisionChecker {
 
   async check(pr: ScoredPR): Promise<{
     alignment: 'aligned' | 'tangential' | 'off-roadmap';
+    score: number;
     reason: string;
   }> {
-    const prompt = `You are a project maintainer. Given the project vision document and a pull request, classify the PR's alignment.
+    await sleep(100); // Rate limiting
 
-VISION DOCUMENT:
+    const prompt = `Given this project vision:
 ${this.visionDoc.slice(0, 3000)}
 
-PULL REQUEST:
-Title: ${pr.title}
-Description: ${(pr.body ?? '').slice(0, 1000)}
-Files changed: ${pr.changedFiles.slice(0, 15).join(', ')}
-Author: ${pr.author} (${pr.authorAssociation})
+Rate how well this PR aligns with the vision (0-100) and explain briefly:
+PR Title: ${pr.title}
+PR Body: ${(pr.body ?? '').slice(0, 2000)}
 
 Respond with EXACTLY one JSON object (no markdown):
-{"alignment": "aligned"|"tangential"|"off-roadmap", "reason": "one sentence explanation"}`;
+{"score": <0-100>, "alignment": "aligned"|"tangential"|"off-roadmap", "reason": "one sentence"}`;
 
     const res = await fetch(`${GEMINI_URL}?key=${this.geminiApiKey}`, {
       method: 'POST',
@@ -54,12 +55,13 @@ Respond with EXACTLY one JSON object (no markdown):
       if (match) {
         const parsed = JSON.parse(match[0]);
         return {
-          alignment: parsed.alignment ?? 'unchecked',
+          score: Math.max(0, Math.min(100, Number(parsed.score) || 50)),
+          alignment: parsed.alignment ?? 'tangential',
           reason: parsed.reason ?? 'No reason provided',
         };
       }
     } catch { /* fallback */ }
 
-    return { alignment: 'tangential', reason: 'Could not parse LLM response' };
+    return { alignment: 'tangential', score: 50, reason: 'Could not parse LLM response' };
   }
 }

@@ -18,7 +18,7 @@ export class TreliqScanner {
   constructor(config: TreliqConfig) {
     this.config = config;
     this.octokit = new Octokit({ auth: config.token });
-    this.scoring = new ScoringEngine();
+    this.scoring = new ScoringEngine(config.geminiApiKey);
   }
 
   async scan(): Promise<TreliqResult> {
@@ -66,6 +66,7 @@ export class TreliqScanner {
             try {
               const result = await vision.check(pr);
               pr.visionAlignment = result.alignment;
+              pr.visionScore = result.score;
               pr.visionReason = result.reason;
             } catch {
               pr.visionAlignment = 'unchecked';

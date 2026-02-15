@@ -48,7 +48,11 @@ export interface ScoredPR extends PRData {
   signals: SignalScore[];
   embedding?: number[];
   visionAlignment?: 'aligned' | 'tangential' | 'off-roadmap' | 'unchecked';
+  visionScore?: number;        // 0-100 LLM vision alignment score
   visionReason?: string;
+  llmScore?: number;           // 0-100 LLM quality score
+  llmRisk?: 'low' | 'medium' | 'high';
+  llmReason?: string;
   duplicateGroup?: number;     // Cluster ID if part of a duplicate group
   isSpam: boolean;
   spamReasons: string[];
