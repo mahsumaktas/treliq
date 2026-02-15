@@ -119,9 +119,9 @@ function render(){
       <td title="${(pr.title||'').replace(/"/g,'&quot;')}">${(pr.title||'').slice(0,60)}</td>
       <td>@${pr.author||''}</td>
       <td>${pr.filesChanged||0}</td>
-      <td>${pr.isSpam?'<span class="spam">⚠️</span>':'<span class="no-spam">✓</span>'}</td>
+      <td>${pr.isSpam?'<span class="spam">🚩 Spam</span>':'<span class="no-spam">Clean</span>'}</td>
       <td>${pr.llmScore!=null?pr.llmScore:'-'}</td>
-      <td>${pr.visionScore!=null?pr.visionScore:'-'}</td>
+      <td>${pr.visionAlignment==='unchecked'?'N/A':(pr.visionScore!=null?pr.visionScore:'No doc')}</td>
     </tr>`;
   }).join('');
 

@@ -67,9 +67,9 @@ function outputResult(result: TreliqResult, format: string) {
     Author: pr.author.slice(0, 12),
     CI: pr.ciStatus,
     'V.Score': pr.visionScore ?? '-',
-    Vision: pr.visionAlignment ?? '-',
-    Spam: pr.isSpam ? '⚠️' : '✓',
-    Dup: pr.duplicateGroup !== undefined ? `G${pr.duplicateGroup}` : '-',
+    Vision: pr.visionAlignment === 'unchecked' ? 'N/A' : (pr.visionAlignment ?? 'No doc'),
+    Spam: pr.isSpam ? '🚩 Spam' : 'Clean',
+    Dup: pr.duplicateGroup !== undefined ? `G${pr.duplicateGroup}` : '—',
   }));
   console.table(rows);
 
@@ -160,7 +160,7 @@ program
       console.log(`| Metric | Value |`);
       console.log(`|--------|-------|`);
       console.log(`| **Total Score** | **${scored.totalScore}/100** |`);
-      console.log(`| Spam | ${scored.isSpam ? '⚠️ Yes' : '✅ No'} |`);
+      console.log(`| Spam | ${scored.isSpam ? '🚩 Spam' : '✅ Clean'} |`);
       console.log(`| Files Changed | ${scored.filesChanged} |`);
       console.log(`| +${scored.additions} / -${scored.deletions} | ${scored.commits} commits |`);
       if (scored.llmScore != null) console.log(`| LLM Quality | ${scored.llmScore}/100 (${scored.llmRisk}) |`);
