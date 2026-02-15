@@ -1,6 +1,12 @@
-# Treliq
+<p align="center">
+  <img src="docs/logo.png" alt="Treliq" width="120" />
+</p>
 
-**AI-Powered PR Triage for Open Source Maintainers**
+<h1 align="center">Treliq</h1>
+
+<p align="center">
+  <strong>AI-Powered PR Triage for Open Source Maintainers</strong>
+</p>
 
 > *"3,100 PRs. Which ones should I merge?"* — Every maintainer, eventually.
 
