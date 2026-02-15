@@ -168,7 +168,18 @@ program
       headRef: pr.head.ref, baseRef: pr.base.ref,
       filesChanged: pr.changed_files, additions: pr.additions, deletions: pr.deletions,
       commits: pr.commits, labels: pr.labels.map((l: any) => l.name ?? ''),
-      ciStatus: 'unknown' as const, hasIssueRef: issueNumbers.length > 0,
+      ciStatus: await (async () => {
+        try {
+          const checks = await octokit.checks.listForRef({ owner, repo, ref: pr.head.sha });
+          if (checks.data.total_count > 0) {
+            const conclusions = checks.data.check_runs.map((c: any) => c.conclusion);
+            if (conclusions.some((c: any) => c === 'failure')) return 'failure' as const;
+            if (conclusions.every((c: any) => c === 'success' || c === 'skipped')) return 'success' as const;
+            return 'pending' as const;
+          }
+          return 'unknown' as const;
+        } catch { return 'unknown' as const; }
+      })(), hasIssueRef: issueNumbers.length > 0,
       issueNumbers, changedFiles: changedFileNames,
       diffUrl: pr.diff_url,
       hasTests: testFilesChanged.length > 0,
