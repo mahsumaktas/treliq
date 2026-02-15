@@ -24,48 +24,121 @@ Code Review ≠ PR Triage. Treliq fills the gap.
 
 ## Features
 
-### v0.1 — Foundation (Current)
-- [ ] 🔍 **PR Dedup** — Semantic similarity detection across open PRs
-- [ ] 📊 **Multi-Signal Scoring** — Code quality, test coverage, CI status, commit quality, contributor history
-- [ ] 📋 **Vision Doc Alignment** — Check if PR matches project roadmap/guidelines
-- [ ] 🏆 **"Best PR" Selection** — When multiple PRs solve the same issue, pick the winner
-- [ ] 🚫 **Spam Filter** — Heuristic + AI spam/low-effort detection
-- [ ] 📦 **Batch Scan** — Analyze all open PRs at once (not just event-driven)
+### v0.1 — Foundation
+- ✅ 🔍 **PR Dedup** — Semantic similarity detection across open PRs
+- ✅ 📊 **Multi-Signal Scoring** — Code quality, test coverage, CI status, commit quality, contributor history
+- ✅ 📋 **Vision Doc Alignment** — Check if PR matches project roadmap/guidelines
+- ✅ 🏆 **"Best PR" Selection** — When multiple PRs solve the same issue, pick the winner
+- ✅ 🚫 **Spam Filter** — Heuristic + AI spam/low-effort detection
+- ✅ 📦 **Batch Scan** — Analyze all open PRs at once
 
-### v0.2 — Planned
-- [ ] 🖥️ **Dashboard** — Web UI for maintainer overview
-- [ ] 👤 **Contributor Reputation** — Track contributor history and trust scores
-- [ ] 🔄 **Cross-Repo Search** — Find related PRs across organization
-- [ ] 💬 **PR Commands** — `/treliq review`, `/treliq score`, `/treliq compare`
+### v0.2 — LLM Integration
+- ✅ 🤖 **Gemini AI Scoring** — Deep PR quality analysis via Gemini
+- ✅ 🔗 **Embedding Dedup** — Vector similarity for duplicate detection
+
+### v0.3 — PR Commands & Dashboard ✨ NEW
+- ✅ 💬 **PR Commands** — `/treliq score`, `/treliq scan` via GitHub Action
+- ✅ 🖥️ **Dashboard** — Static HTML dashboard for PR overview (gh-pages ready)
+- ✅ 🎯 **Single PR Scoring** — `treliq score -r owner/repo -n 123`
+- ✅ ⚡ **Auto-scan** — Automatically score new PRs on open/synchronize
+
+## Quick Start
+
+### CLI
+
+```bash
+# Score a single PR
+npx treliq score -r owner/repo -n 123 -f markdown
+
+# Scan all open PRs
+npx treliq scan -r owner/repo -m 100 -f json
+
+# Find duplicates
+npx treliq dedup -r owner/repo
+```
+
+### GitHub Action
+
+Add to your repo's `.github/workflows/treliq-scan.yml`:
+
+```yaml
+name: Treliq PR Triage
+on:
+  pull_request:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  auto-scan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install -g treliq@latest
+      - name: Score PR
+        id: score
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          RESULT=$(npx treliq score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown)
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: process.env.SCORE_RESULT,
+            });
+        env:
+          SCORE_RESULT: ${{ steps.score.outputs.result }}
+```
+
+**Required secrets:**
+- `GEMINI_API_KEY` — Get from [Google AI Studio](https://aistudio.google.com/apikey)
+- `GITHUB_TOKEN` — Automatic, no setup needed
+
+**PR Commands:**
+- Comment `/treliq score` on any PR to get its triage score
+- Comment `/treliq scan` on any PR to scan all open PRs
+
+### Dashboard
+
+Open `dashboard/index.html` in a browser or deploy to GitHub Pages:
+
+<!-- TODO: Add dashboard screenshot -->
+![Dashboard](docs/dashboard-preview.png)
+
+- Paste scan JSON or load from URL
+- Sortable PR table by score, files, author
+- Duplicate cluster visualization
+- Spam detection flags
+
+Generate fresh data: `npm run dashboard`
 
 ## Architecture
 
 ```
-├── GitHub App (Webhook)     — Real-time event listening
-├── TypeScript + Probot      — GitHub API integration
-├── LanceDB                  — PR/Issue embeddings (serverless, no infra)
-├── Gemini/Claude API        — Deep review + vision alignment
-├── SQLite                   — State/history persistence
-├── CLI                      — Batch scan ("scan all open PRs")
-└── Dashboard (React)        — Maintainer overview (v0.2)
-```
-
-## How It Works
-
-```
-New PR opened
-    │
-    ▼
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Spam Filter │────▶│  Dedup Check  │────▶│  Multi-Signal │────▶│   Vision Doc  │
-│  (Heuristic) │     │  (Embedding)  │     │   Scoring     │     │  Alignment    │
-└─────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
-                                                                       │
-                                                                       ▼
-                                                              ┌──────────────┐
-                                                              │  PR Comment   │
-                                                              │  + Dashboard  │
-                                                              └──────────────┘
+├── CLI (Commander.js)        — scan, score, dedup commands
+├── GitHub Action             — Auto-scan + PR commands
+├── LanceDB                   — PR/Issue embeddings (serverless)
+├── Gemini API                — Deep review + vision alignment
+├── SQLite                    — State/history persistence
+├── Dashboard (Static HTML)   — Single-file, no build step
+└── Octokit                   — GitHub API integration
 ```
 
 ### Scoring Signals
@@ -74,44 +147,11 @@ New PR opened
 |--------|--------|--------|
 | Semantic similarity to other PRs | High | LanceDB embeddings |
 | CI pass/fail | High | GitHub Checks API |
-| Test coverage delta | Medium | CI artifacts |
 | Code quality (lint, complexity) | Medium | LLM analysis |
 | Commit message quality | Low | Conventional commits check |
-| Contributor history | Medium | GitHub API (past PRs, merge rate) |
+| Contributor history | Medium | GitHub API |
 | Breaking change detection | High | LLM diff analysis |
 | Vision doc alignment | High | LLM + VISION.md comparison |
-
-## Quick Start
-
-### As GitHub Action
-```yaml
-# .github/workflows/treliq.yml
-name: Treliq PR Triage
-on:
-  pull_request:
-    types: [opened, synchronize]
-  workflow_dispatch:
-    inputs:
-      scan_all:
-        description: 'Scan all open PRs'
-        type: boolean
-
-jobs:
-  triage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: mahsumaktas/treliq@v0.1
-        with:
-          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
-          vision-doc: './VISION.md'  # Optional: project roadmap
-```
-
-### As CLI
-```bash
-npx treliq scan --repo owner/repo --token $GITHUB_TOKEN
-npx treliq compare --pr 123 456 789  # Compare 3 PRs
-npx treliq score --pr 123            # Score a single PR
-```
 
 ## Inspired By
 
@@ -120,20 +160,6 @@ npx treliq score --pr 123            # Score a single PR
 | [Qodo PR-Agent](https://github.com/qodo-ai/pr-agent) | `/review` command pattern |
 | [Greptile](https://greptile.com) | Full codebase context matters |
 | [ai-duplicate-detector](https://github.com/mackgorski/ai-duplicate-detector) | Embedding threshold system |
-| [Simili-bot](https://github.com/similigh/simili-bot) | Modular triage pipeline |
-| [PRShield](https://github.com/kunalsz/PRShield) | Simple heuristic scoring as first filter |
-
-## Why TypeScript?
-
-- **Probot** framework for GitHub Apps
-- **Octokit** for GitHub API
-- **Vercel AI SDK** for LLM integration
-- Best ecosystem for GitHub tooling
-- Claude Code writes it fluently
-
-## Contributing
-
-PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
@@ -141,4 +167,4 @@ MIT © [Mahsum Aktaş](https://github.com/mahsumaktas)
 
 ---
 
-*Built because Dify was too expensive, Simili-bot was too limited, and 3,100 PRs won't triage themselves.*
+*Built because 3,100 PRs won't triage themselves.*

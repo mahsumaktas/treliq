@@ -1,0 +1,138 @@
+name: Treliq PR Triage
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  # Auto-scan new/updated PRs
+  auto-scan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install treliq
+        run: |
+          npm install -g treliq@latest || npx treliq --version
+      - name: Score PR
+        id: score
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          RESULT=$(npx treliq score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown)
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `<!-- treliq-score -->\n${process.env.SCORE_RESULT}`;
+            // Delete previous treliq comment if exists
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            const prev = comments.find(c => c.body?.includes('<!-- treliq-score -->'));
+            if (prev) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: prev.id,
+              });
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
+        env:
+          SCORE_RESULT: ${{ steps.score.outputs.result }}
+
+  # /treliq score — score the current PR
+  command-score:
+    if: |
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/treliq score')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install treliq
+        run: npm install -g treliq@latest || npx treliq --version
+      - name: Score PR
+        id: score
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          PR_NUM=${{ github.event.issue.number }}
+          RESULT=$(npx treliq score -r ${{ github.repository }} -n $PR_NUM -f markdown)
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: process.env.SCORE_RESULT,
+            });
+        env:
+          SCORE_RESULT: ${{ steps.score.outputs.result }}
+
+  # /treliq scan — scan all open PRs
+  command-scan:
+    if: |
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/treliq scan')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install treliq
+        run: npm install -g treliq@latest || npx treliq --version
+      - name: Scan all PRs
+        id: scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          RESULT=$(npx treliq scan -r ${{ github.repository }} -m 100 -f markdown)
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: process.env.SCAN_RESULT,
+            });
+        env:
+          SCAN_RESULT: ${{ steps.scan.outputs.result }}

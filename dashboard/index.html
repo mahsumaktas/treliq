@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Treliq Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#2da44e;--red:#f85149;--yellow:#d29922;--blue:#58a6ff}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+.container{max-width:1200px;margin:0 auto;padding:24px}
+header{display:flex;align-items:center;gap:16px;margin-bottom:32px;flex-wrap:wrap}
+header h1{font-size:28px;font-weight:700}
+header h1 span{color:var(--green)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px}
+.stat .label{color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.5px}
+.stat .value{font-size:32px;font-weight:700;margin-top:4px}
+.stat .value.green{color:var(--green)}.stat .value.red{color:var(--red)}.stat .value.yellow{color:var(--yellow)}
+.input-area{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:24px}
+.input-area label{display:block;color:var(--muted);margin-bottom:8px;font-size:14px}
+.input-area textarea{width:100%;height:120px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:12px;font-family:monospace;font-size:13px;resize:vertical}
+.input-area .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.btn{background:var(--green);color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}
+.btn:hover{filter:brightness(1.1)}.btn.secondary{background:var(--surface);border:1px solid var(--border);color:var(--text)}
+input[type=text]{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:14px;flex:1;min-width:200px}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);font-size:14px}
+th{background:var(--bg);color:var(--muted);font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--text)}
+th .arrow{margin-left:4px;font-size:11px}
+tr:hover{background:rgba(45,164,78,.06)}
+.spam{color:var(--red);font-weight:600}.no-spam{color:var(--green)}
+.score-bar{display:inline-block;height:8px;border-radius:4px;min-width:4px}
+.cluster-section{margin-top:32px}
+.cluster{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px}
+.cluster h3{font-size:16px;margin-bottom:8px}.cluster .sim{color:var(--yellow);font-size:13px}
+.cluster ul{list-style:none;padding:0}.cluster li{padding:4px 0;font-size:14px}
+.cluster li .best{color:var(--green);font-weight:600}
+.empty{text-align:center;color:var(--muted);padding:48px}
+#sections{display:none}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🔍 <span>Treliq</span> Dashboard</h1>
+  </header>
+
+  <div class="input-area">
+    <label>Load scan results (paste JSON or enter URL)</label>
+    <div class="actions">
+      <input type="text" id="urlInput" placeholder="URL to JSON (e.g. demo.json)">
+      <button class="btn" onclick="loadFromUrl()">Load URL</button>
+      <button class="btn secondary" onclick="loadDemo()">Load Demo</button>
+    </div>
+    <textarea id="jsonInput" placeholder='Paste treliq scan JSON here...'></textarea>
+    <div class="actions"><button class="btn" onclick="loadFromText()">Parse JSON</button></div>
+  </div>
+
+  <div id="sections">
+    <div class="stats">
+      <div class="stat"><div class="label">Total PRs</div><div class="value" id="totalPRs">0</div></div>
+      <div class="stat"><div class="label">Spam Detected</div><div class="value red" id="spamCount">0</div></div>
+      <div class="stat"><div class="label">Duplicate Clusters</div><div class="value yellow" id="dupCount">0</div></div>
+      <div class="stat"><div class="label">Avg Score</div><div class="value green" id="avgScore">0</div></div>
+    </div>
+
+    <h2 style="margin-bottom:12px">Pull Requests</h2>
+    <table id="prTable">
+      <thead><tr>
+        <th data-col="number"># <span class="arrow"></span></th>
+        <th data-col="totalScore">Score <span class="arrow"></span></th>
+        <th data-col="title">Title <span class="arrow"></span></th>
+        <th data-col="author">Author <span class="arrow"></span></th>
+        <th data-col="filesChanged">Files <span class="arrow"></span></th>
+        <th data-col="isSpam">Spam <span class="arrow"></span></th>
+        <th data-col="llmScore">LLM <span class="arrow"></span></th>
+        <th data-col="visionScore">Vision <span class="arrow"></span></th>
+      </tr></thead>
+      <tbody id="prBody"></tbody>
+    </table>
+
+    <div class="cluster-section">
+      <h2 style="margin-bottom:12px">Duplicate Clusters</h2>
+      <div id="clusters"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let data=null,sortCol='totalScore',sortAsc=false;
+
+function render(){
+  if(!data)return;
+  document.getElementById('sections').style.display='block';
+  document.getElementById('totalPRs').textContent=data.totalPRs||data.rankedPRs?.length||0;
+  document.getElementById('spamCount').textContent=data.spamCount||0;
+  document.getElementById('dupCount').textContent=data.duplicateClusters?.length||0;
+  const prs=data.rankedPRs||[];
+  const avg=prs.length?Math.round(prs.reduce((s,p)=>s+p.totalScore,0)/prs.length):0;
+  document.getElementById('avgScore').textContent=avg;
+
+  const sorted=[...prs].sort((a,b)=>{
+    let va=a[sortCol],vb=b[sortCol];
+    if(typeof va==='string')va=va.toLowerCase();
+    if(typeof vb==='string')vb=vb.toLowerCase();
+    if(va==null)va=sortAsc?Infinity:-Infinity;
+    if(vb==null)vb=sortAsc?Infinity:-Infinity;
+    return sortAsc?(va>vb?1:-1):(va<vb?1:-1);
+  });
+
+  const tbody=document.getElementById('prBody');
+  tbody.innerHTML=sorted.map(pr=>{
+    const c=pr.totalScore>=70?'var(--green)':pr.totalScore>=40?'var(--yellow)':'var(--red)';
+    return `<tr>
+      <td><a href="https://github.com/${data.repo||''}/pull/${pr.number}" target="_blank" style="color:var(--blue)">#${pr.number}</a></td>
+      <td><span class="score-bar" style="background:${c};width:${pr.totalScore*.6}px"></span> ${pr.totalScore}</td>
+      <td title="${(pr.title||'').replace(/"/g,'&quot;')}">${(pr.title||'').slice(0,60)}</td>
+      <td>@${pr.author||''}</td>
+      <td>${pr.filesChanged||0}</td>
+      <td>${pr.isSpam?'<span class="spam">⚠️</span>':'<span class="no-spam">✓</span>'}</td>
+      <td>${pr.llmScore!=null?pr.llmScore:'-'}</td>
+      <td>${pr.visionScore!=null?pr.visionScore:'-'}</td>
+    </tr>`;
+  }).join('');
+
+  // Clusters
+  const cd=document.getElementById('clusters');
+  const clusters=data.duplicateClusters||[];
+  if(!clusters.length){cd.innerHTML='<div class="empty">No duplicate clusters found</div>';return;}
+  cd.innerHTML=clusters.map(c=>`<div class="cluster">
+    <h3>Cluster ${c.id} <span class="sim">(${(c.similarity*100).toFixed(1)}% similar)</span></h3>
+    <ul>${c.prs.map(p=>`<li>${p.number===c.bestPR?'<span class="best">⭐</span>':''} #${p.number} (${p.totalScore}) — ${(p.title||'').slice(0,70)}</li>`).join('')}</ul>
+  </div>`).join('');
+}
+
+document.querySelectorAll('#prTable th').forEach(th=>{
+  th.addEventListener('click',()=>{
+    const col=th.dataset.col;
+    if(sortCol===col)sortAsc=!sortAsc;else{sortCol=col;sortAsc=false;}
+    render();
+  });
+});
+
+function loadFromText(){
+  try{data=JSON.parse(document.getElementById('jsonInput').value);render();}
+  catch(e){alert('Invalid JSON: '+e.message);}
+}
+
+async function loadFromUrl(){
+  const url=document.getElementById('urlInput').value.trim();
+  if(!url)return;
+  try{const r=await fetch(url);data=await r.json();render();}
+  catch(e){alert('Failed to load: '+e.message);}
+}
+
+function loadDemo(){
+  document.getElementById('urlInput').value='demo.json';
+  loadFromUrl();
+}
+
+// Auto-load demo.json if available
+fetch('demo.json').then(r=>r.ok?r.json():null).then(d=>{if(d){data=d;render();}}).catch(()=>{});
+</script>
+</body>
+</html>

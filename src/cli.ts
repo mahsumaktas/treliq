@@ -112,7 +112,7 @@ program
   .command('score')
   .description('Score a single PR')
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
-  .requiredOption('-p, --pr <number>', 'PR number')
+  .requiredOption('-n, --pr <number>', 'PR number')
   .option('-t, --token <token>', 'GitHub token')
   .option('-f, --format <format>', 'Output format', 'table')
   .action(async (opts) => {
@@ -154,6 +154,23 @@ program
 
     if (opts.format === 'json') {
       console.log(JSON.stringify(scored, null, 2));
+    } else if (opts.format === 'markdown') {
+      console.log(`## 🎯 Treliq Score — PR #${scored.number}\n`);
+      console.log(`**${scored.title}** by @${scored.author}\n`);
+      console.log(`| Metric | Value |`);
+      console.log(`|--------|-------|`);
+      console.log(`| **Total Score** | **${scored.totalScore}/100** |`);
+      console.log(`| Spam | ${scored.isSpam ? '⚠️ Yes' : '✅ No'} |`);
+      console.log(`| Files Changed | ${scored.filesChanged} |`);
+      console.log(`| +${scored.additions} / -${scored.deletions} | ${scored.commits} commits |`);
+      if (scored.llmScore != null) console.log(`| LLM Quality | ${scored.llmScore}/100 (${scored.llmRisk}) |`);
+      if (scored.visionScore != null) console.log(`| Vision Alignment | ${scored.visionScore}/100 (${scored.visionAlignment}) |`);
+      console.log(`\n### Signal Breakdown\n`);
+      console.log(`| Signal | Score | Weight | Reason |`);
+      console.log(`|--------|-------|--------|--------|`);
+      for (const s of scored.signals) {
+        console.log(`| ${s.name} | ${s.score}/100 | ${s.weight} | ${s.reason} |`);
+      }
     } else {
       console.log(`\n🎯 PR #${scored.number}: ${scored.title}`);
       console.log(`   Score: ${scored.totalScore}/100 | Spam: ${scored.isSpam ? 'Yes' : 'No'}\n`);
