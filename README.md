@@ -55,6 +55,9 @@ npx treliq scan -r owner/repo -m 100 -f json
 
 # Find duplicates
 npx treliq dedup -r owner/repo
+
+# Trust known contributors (exempt from spam detection)
+npx treliq scan -r owner/repo --trust-contributors
 ```
 
 ### GitHub Action
@@ -119,8 +122,7 @@ jobs:
 
 Open `dashboard/index.html` in a browser or deploy to GitHub Pages:
 
-<!-- TODO: Add dashboard screenshot -->
-![Dashboard](docs/dashboard-preview.png)
+**[Live Demo →](https://mahsumaktas.github.io/treliq/)**
 
 - Paste scan JSON or load from URL
 - Sortable PR table by score, files, author

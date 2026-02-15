@@ -45,17 +45,18 @@
 
 ---
 
-## v0.2 — GitHub Integration
-- GitHub Actions workflow
-- GitHub App (webhook-based, real-time)
-- `/treliq` PR comment commands
-- Probot framework
+## v0.2 — LLM Integration ✅
+- ✅ Gemini AI scoring (quality + risk assessment)
+- ✅ Embedding-based dedup (gemini-embedding-001)
+- ✅ Blended scoring (40% heuristic + 60% LLM)
 
-## v0.3 — Dashboard
-- Next.js web UI
-- PR overview with scores
-- Duplicate groups visualization
-- Contributor leaderboard
+## v0.3 — GitHub Integration + Dashboard ✅
+- ✅ GitHub Actions workflow (auto-scan on PR open)
+- ✅ `/treliq score`, `/treliq scan` PR comment commands
+- ✅ Static HTML dashboard (dark theme, sortable, no build step)
+- ✅ Single PR scoring (`treliq score -n 123`)
+- ✅ `--trust-contributors` flag
+- ✅ Live demo: mahsumaktas.github.io/treliq
 
 ## v0.4 — Enterprise
 - Cross-repo analysis
