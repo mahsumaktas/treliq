@@ -11,10 +11,15 @@ async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 export class ScoringEngine {
   private geminiApiKey: string;
   private trustContributors: boolean;
+  private reputationScores = new Map<string, number>();
 
   constructor(geminiApiKey?: string, trustContributors = false) {
     this.geminiApiKey = geminiApiKey ?? process.env.GEMINI_API_KEY ?? '';
     this.trustContributors = trustContributors;
+  }
+
+  setReputation(login: string, score: number) {
+    this.reputationScores.set(login, score);
   }
 
   async score(pr: PRData): Promise<ScoredPR> {
@@ -28,6 +33,10 @@ export class ScoringEngine {
       this.scoreTestCoverage(pr),
       this.scoreStaleness(pr),
       this.scoreMergeability(pr),
+      this.scoreReviewStatus(pr),
+      this.scoreBodyQuality(pr),
+      this.scoreActivity(pr),
+      this.scoreBreakingChange(pr),
     ];
 
     const heuristicScore = signals.reduce(
@@ -132,7 +141,14 @@ export class ScoringEngine {
       OWNER: 100, MEMBER: 90, COLLABORATOR: 85, CONTRIBUTOR: 70,
       FIRST_TIMER: 40, FIRST_TIME_CONTRIBUTOR: 40, NONE: 30,
     };
-    return { name: 'contributor', score: trustMap[pr.authorAssociation] ?? 50, weight: 0.15, reason: `${pr.author} (${pr.authorAssociation})` };
+    let assocScore = trustMap[pr.authorAssociation] ?? 50;
+    const repScore = this.reputationScores.get(pr.author);
+    // Blend: 70% association + 30% reputation if available
+    const score = repScore !== undefined
+      ? Math.round(0.7 * assocScore + 0.3 * repScore)
+      : assocScore;
+    const repInfo = repScore !== undefined ? `, rep: ${repScore}` : '';
+    return { name: 'contributor', score, weight: 0.15, reason: `${pr.author} (${pr.authorAssociation}${repInfo})` };
   }
 
   private scoreIssueRef(pr: PRData): SignalScore {
@@ -192,5 +208,63 @@ export class ScoringEngine {
   private scoreMergeability(pr: PRData): SignalScore {
     const scoreMap = { mergeable: 100, unknown: 50, conflicting: 10 };
     return { name: 'mergeability', score: scoreMap[pr.mergeable], weight: 0.15, reason: `Merge status: ${pr.mergeable}` };
+  }
+
+  private scoreReviewStatus(pr: PRData): SignalScore {
+    const stateScores: Record<string, number> = {
+      approved: 100, changes_requested: 30, commented: 60, none: 40,
+    };
+    let score = stateScores[pr.reviewState] ?? 40;
+    if (pr.reviewCount >= 2) score = Math.min(100, score + 10);
+    return { name: 'review_status', score, weight: 0.10, reason: `Review: ${pr.reviewState} (${pr.reviewCount} reviews)` };
+  }
+
+  private scoreBodyQuality(pr: PRData): SignalScore {
+    const len = (pr.body ?? '').length;
+    let score: number;
+    if (len > 500) score = 90;
+    else if (len >= 200) score = 70;
+    else if (len >= 50) score = 50;
+    else score = 20;
+    if (/- \[[ x]\]/.test(pr.body ?? '')) score = Math.min(100, score + 10);
+    if (/!\[/.test(pr.body ?? '')) score = Math.min(100, score + 10);
+    return { name: 'body_quality', score, weight: 0.05, reason: `Body: ${len} chars` };
+  }
+
+  private scoreActivity(pr: PRData): SignalScore {
+    let score: number;
+    if (pr.commentCount >= 5) score = 90;
+    else if (pr.commentCount >= 2) score = 70;
+    else if (pr.commentCount === 1) score = 50;
+    else score = 30;
+    return { name: 'activity', score, weight: 0.05, reason: `${pr.commentCount} comments` };
+  }
+
+  private scoreBreakingChange(pr: PRData): SignalScore {
+    let breaking = false;
+    const reasons: string[] = [];
+
+    if (/breaking|BREAKING/i.test(pr.title) || /^[a-z]+(\(.+\))?!:/.test(pr.title)) {
+      breaking = true;
+      reasons.push('Title indicates breaking change');
+    }
+    const riskyFiles = pr.changedFiles.filter(f =>
+      /^package\.json$|tsconfig\.json|\/api\//.test(f)
+    );
+    if (riskyFiles.length > 0) {
+      breaking = true;
+      reasons.push(`Risky files: ${riskyFiles.slice(0, 3).join(', ')}`);
+    }
+    if (pr.deletions > 100) {
+      breaking = true;
+      reasons.push(`${pr.deletions} deletions`);
+    }
+
+    return {
+      name: 'breaking_change',
+      score: breaking ? 40 : 80,
+      weight: 0.05,
+      reason: breaking ? reasons.join('; ') : 'No breaking change signals',
+    };
   }
 }

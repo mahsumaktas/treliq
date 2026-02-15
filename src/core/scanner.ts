@@ -8,6 +8,7 @@ import { ScoringEngine } from './scoring';
 import { DedupEngine } from './dedup';
 import { VisionChecker } from './vision';
 import { loadCache, saveCache, getCacheHit, type PRListItem } from './cache';
+import { getReputation } from './reputation';
 
 const ISSUE_REF_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
 const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
@@ -21,7 +22,7 @@ export class TreliqScanner {
 
   constructor(config: TreliqConfig) {
     this.config = config;
-    this.octokit = new Octokit({ auth: config.token });
+    this.octokit = new Octokit({ auth: config.token, request: { timeout: 15000 } });
     this.scoring = new ScoringEngine(config.geminiApiKey, config.trustContributors);
   }
 
@@ -68,6 +69,14 @@ export class TreliqScanner {
       if (toFetch.length > 0) {
         console.error(`📊 Scoring ${toFetch.length} changed/new PRs (${fromCache} from cache)...`);
         const freshPRs = await this.fetchPRDetails(toFetch);
+        // Fetch reputation for new authors
+        const newAuthors = [...new Set(freshPRs.map(p => p.author))];
+        for (const author of newAuthors) {
+          try {
+            const rep = await getReputation(this.octokit, author);
+            this.scoring.setReputation(author, rep.reputationScore);
+          } catch { /* skip */ }
+        }
         for (const pr of freshPRs) {
           scored.push(await this.scoring.score(pr));
           reScored++;
@@ -79,6 +88,18 @@ export class TreliqScanner {
       // No cache — full fetch (shas collected via this.shaMap in fetchPRs)
       prs = await this.fetchPRs();
       console.error(`   Found ${prs.length} open PRs`);
+
+      // Fetch reputation for unique authors
+      const allPRs = prs;
+      const uniqueAuthors = [...new Set(allPRs.map(p => p.author))];
+      console.error(`👤 Fetching reputation for ${uniqueAuthors.length} contributors...`);
+      for (const author of uniqueAuthors) {
+        try {
+          const rep = await getReputation(this.octokit, author);
+          this.scoring.setReputation(author, rep.reputationScore);
+        } catch { /* skip */ }
+      }
+
       console.error('📊 Scoring PRs...');
       for (const pr of prs) {
         scored.push(await this.scoring.score(pr));

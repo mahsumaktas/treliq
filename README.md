@@ -32,7 +32,7 @@ Code Review ≠ PR Triage. Treliq fills the gap.
 ## Features
 
 - 🔍 **Semantic PR Dedup** — Embedding similarity via Gemini to find duplicate/related PRs
-- 📊 **9-Signal Scoring** — CI, test coverage, merge conflicts, staleness, diff size, commit quality, contributor trust, issue refs, spam detection
+- 📊 **13-Signal Scoring** — CI, test coverage, merge conflicts, staleness, diff size, commit quality, contributor trust + reputation, issue refs, spam detection, review status, body quality, activity, breaking change detection
 - 🤖 **LLM-Assisted Analysis** — Gemini Flash judges practical value, not authorship
 - 📋 **Vision Doc Alignment** — Checks PRs against VISION.md/ROADMAP.md
 - 💬 **GitHub Action + PR Commands** — `/treliq score`, `/treliq scan` from PR comments
@@ -131,12 +131,16 @@ Generate fresh data: `npm run dashboard`
 | CI Status | 0.20 | Pass / fail / pending from GitHub Checks |
 | Test Coverage | 0.15 | Whether test files were changed alongside code |
 | Merge Conflicts | 0.15 | Mergeable / conflicting / unknown |
-| Contributor Trust | 0.15 | Author association (member, collaborator, first-timer) |
+| Contributor Trust | 0.15 | Author association + GitHub reputation (followers, repos, account age) |
 | Spam Detection | 0.15 | Heuristic flags: tiny diff, docs-only, single-file |
+| Review Status | 0.10 | Approved / changes requested / commented / none |
 | Diff Size | 0.10 | Lines changed — penalizes extremes |
 | Staleness | 0.10 | Days since PR opened |
 | Issue References | 0.10 | Links to issues via `Fixes #123` etc. |
 | Commit Quality | 0.05 | Conventional commit format check |
+| Body Quality | 0.05 | PR description length, checklists, screenshots |
+| Conversation Activity | 0.05 | Comment count — active discussion signals engagement |
+| Breaking Change | 0.05 | Detects breaking changes via title, risky files, large deletions |
 
 > Weights total > 1.0 because the final score is a weighted average, not a sum.
 
@@ -154,7 +158,7 @@ When a Gemini API key is provided, an **LLM quality score** (0–100) is blended
 │ API      │ Embeddings│ Embeddings│ State      │
 ├──────────┴──────────┴───────────┴────────────┤
 │              Scoring Engine                   │
-│  9 signals → weighted avg → LLM blend        │
+│  13 signals → weighted avg → LLM blend       │
 ├──────────────────────────────────────────────┤
 │  Vision Checker · Dedup Engine · Spam Filter  │
 ├──────────────────────────────────────────────┤
