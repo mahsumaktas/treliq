@@ -141,11 +141,9 @@ export class ScoringEngine {
     let spamScore = 0;
     const reasons: string[] = [];
 
-    // Trusted contributors get a pass — merged PRs before = not spam
-    const trusted = ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR'];
-    if (trusted.includes(pr.authorAssociation)) {
-      return { name: 'spam', score: 100, weight: 0.15, reason: `Trusted contributor (${pr.authorAssociation})` };
-    }
+    // Known contributors get reduced spam penalty (not full exemption)
+    const knownContributor = ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR'].includes(pr.authorAssociation);
+    let trustBonus = knownContributor ? -1 : 0; // 1 fewer spam point
 
     if (pr.additions + pr.deletions < 3) { spamScore += 2; reasons.push('<3 lines'); }
     else if (pr.additions + pr.deletions < 5) { spamScore++; reasons.push('<5 lines'); }
@@ -153,7 +151,8 @@ export class ScoringEngine {
     if ((pr.body ?? '').length < 20) { spamScore++; reasons.push('No/short description'); }
     const docsOnly = pr.changedFiles.every(f => /readme|contributing|license|changelog|\.md$|\.txt$/i.test(f));
     if (docsOnly && pr.changedFiles.length > 0 && pr.additions + pr.deletions < 20) { spamScore++; reasons.push('Trivial docs-only change'); }
-    // Threshold: 4+ signals needed for spam (was 3)
+    spamScore = Math.max(0, spamScore + trustBonus);
+    if (knownContributor && reasons.length > 0) reasons.push(`contributor bonus -1`);
     return { name: 'spam', score: Math.max(0, 100 - spamScore * 25), weight: 0.15, reason: reasons.length > 0 ? reasons.join(', ') : 'No spam signals' };
   }
 }
