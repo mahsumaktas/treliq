@@ -39,10 +39,10 @@ function outputResult(result: TreliqResult, format: string) {
     console.log(`- **Spam:** ${result.spamCount}`);
     console.log(`- **Duplicate clusters:** ${result.duplicateClusters.length}\n`);
     console.log('## Top PRs\n');
-    console.log('| # | Score | LLM | Risk | Title | Author | Vision | V.Score |');
-    console.log('|---|-------|-----|------|-------|--------|--------|---------|');
+    console.log('| # | Score | LLM | Risk | Title | Author | Age | Conflict | Vision | V.Score |');
+    console.log('|---|-------|-----|------|-------|--------|-----|----------|--------|---------|');
     for (const pr of result.rankedPRs.slice(0, 30)) {
-      console.log(`| #${pr.number} | ${pr.totalScore} | ${pr.llmScore ?? '-'} | ${pr.llmRisk ?? '-'} | ${pr.title.slice(0, 50)} | @${pr.author} | ${pr.visionAlignment ?? '-'} | ${pr.visionScore ?? '-'} |`);
+      console.log(`| #${pr.number} | ${pr.totalScore} | ${pr.llmScore ?? '-'} | ${pr.llmRisk ?? '-'} | ${pr.title.slice(0, 50)} | @${pr.author} | ${pr.ageInDays}d | ${pr.mergeable} | ${pr.visionAlignment ?? '-'} | ${pr.visionScore ?? '-'} |`);
     }
     if (result.duplicateClusters.length > 0) {
       console.log('\n## Duplicate Clusters\n');
@@ -66,6 +66,8 @@ function outputResult(result: TreliqResult, format: string) {
     Risk: pr.llmRisk ?? '-',
     Title: pr.title.slice(0, 45),
     Author: pr.author.slice(0, 12),
+    Age: `${pr.ageInDays}d`,
+    Conflict: pr.mergeable,
     CI: pr.ciStatus,
     'V.Score': pr.visionScore ?? '-',
     Vision: pr.visionAlignment === 'unchecked' ? 'N/A' : (pr.visionAlignment ?? 'No doc'),

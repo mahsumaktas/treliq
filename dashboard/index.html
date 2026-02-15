@@ -197,6 +197,10 @@ footer a:hover{text-decoration:underline}
         <th data-col="author">Author <span class="arrow"></span></th>
         <th data-col="filesChanged">Files <span class="arrow"></span></th>
         <th data-col="isSpam">Spam <span class="arrow"></span></th>
+        <th data-col="ageInDays">Age <span class="arrow"></span></th>
+        <th data-col="mergeable">Conflict <span class="arrow"></span></th>
+        <th data-col="ageInDays">Age <span class="arrow"></span></th>
+        <th data-col="mergeable">Conflict <span class="arrow"></span></th>
         <th data-col="llmScore">LLM Risk <span class="arrow"></span></th>
         <th data-col="visionScore">Vision <span class="arrow"></span></th>
       </tr></thead>
@@ -297,6 +301,8 @@ function render(){
       <td title="${(pr.title||'').replace(/"/g,'&quot;')}" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">${(pr.title||'').slice(0,65)}</td>
       <td style="color:var(--muted)">@${pr.author||''}</td>
       <td>${pr.filesChanged||0}</td>
+      <td>${pr.ageInDays||0}d</td>
+      <td>${pr.mergeable||'unknown'}</td>
       <td>${pr.isSpam?'<span class="spam">🚩 Spam</span>':'<span class="no-spam">✓ Clean</span>'}</td>
       <td>${risk.cls?`<span class="risk-pill ${risk.cls}">${risk.level}</span>`:risk.level}</td>
       <td>${pr.visionAlignment==='unchecked'?'N/A':(pr.visionScore!=null?pr.visionScore:'—')}</td>

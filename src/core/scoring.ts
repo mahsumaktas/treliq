@@ -78,7 +78,7 @@ export class ScoringEngine {
     const filesStr = pr.changedFiles.slice(0, 30).join(', ');
     const input = `Title: ${pr.title}\nBody: ${(pr.body ?? '').slice(0, 2000)}\nFiles: ${filesStr}`.slice(0, 4000);
 
-    const prompt = `Rate this GitHub PR on code quality, completeness, and risk (0-100). Return JSON: {"score": <number>, "risk": "low"|"medium"|"high", "reason": "<brief>"}\n${input}`;
+    const prompt = `Rate this GitHub PR on practical value and merge-readiness (0-100). Focus on: Does it solve a real problem? Is the implementation correct and complete? Would merging it improve the project? Ignore whether AI/LLM was used to write it — only judge the end result. Return JSON: {"score": <number>, "risk": "low"|"medium"|"high", "reason": "<brief>"}\nRisk means: would merging this PR cause issues (breaking changes, bugs, security)?\n${input}`;
 
     const res = await fetch(`${GEMINI_URL}?key=${this.geminiApiKey}`, {
       method: 'POST',
@@ -162,5 +162,35 @@ export class ScoringEngine {
     spamScore = Math.max(0, spamScore + trustBonus);
     if (knownContributor && reasons.length > 0) reasons.push(`contributor bonus -1`);
     return { name: 'spam', score: Math.max(0, 100 - spamScore * 25), weight: 0.15, reason: reasons.length > 0 ? reasons.join(', ') : 'No spam signals' };
+  }
+
+  private scoreTestCoverage(pr: PRData): SignalScore {
+    if (pr.hasTests) {
+      return { name: 'test_coverage', score: 90, weight: 0.15, reason: `${pr.testFilesChanged.length} test file(s) changed` };
+    }
+    // Check if docs/config-only PR (tests not expected)
+    const docsConfigOnly = pr.changedFiles.length > 0 && pr.changedFiles.every(f =>
+      /\.(md|txt|json|ya?ml|toml|ini|cfg|conf|lock)$/i.test(f) || /readme|license|changelog|contributing|docs\//i.test(f)
+    );
+    if (docsConfigOnly) {
+      return { name: 'test_coverage', score: 60, weight: 0.15, reason: 'Docs/config PR — tests not expected' };
+    }
+    return { name: 'test_coverage', score: 20, weight: 0.15, reason: 'No test files changed in code PR' };
+  }
+
+  private scoreStaleness(pr: PRData): SignalScore {
+    const days = pr.ageInDays;
+    let score: number;
+    let label: string;
+    if (days < 7) { score = 100; label = 'Fresh'; }
+    else if (days <= 30) { score = 70; label = 'Aging'; }
+    else if (days <= 90) { score = 40; label = 'Stale'; }
+    else { score = 15; label = 'Very stale'; }
+    return { name: 'staleness', score, weight: 0.1, reason: `${days}d old (${label})` };
+  }
+
+  private scoreMergeability(pr: PRData): SignalScore {
+    const scoreMap = { mergeable: 100, unknown: 50, conflicting: 10 };
+    return { name: 'mergeability', score: scoreMap[pr.mergeable], weight: 0.15, reason: `Merge status: ${pr.mergeable}` };
   }
 }
