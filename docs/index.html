@@ -1,72 +1,193 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Treliq Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%232da44e'/><path d='M30 52l15 15 25-30' stroke='white' stroke-width='8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0d1117;--surface:#161b22;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--green:#2da44e;--red:#f85149;--yellow:#d29922;--blue:#58a6ff}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
-.container{max-width:1200px;margin:0 auto;padding:24px}
-header{display:flex;align-items:center;gap:16px;margin-bottom:32px;flex-wrap:wrap}
-header h1{font-size:28px;font-weight:700}
+:root{
+  --bg:#0d1117;--surface:#161b22;--surface2:#1c2128;--border:#30363d;--border-hover:#484f58;
+  --text:#e6edf3;--text-secondary:#c9d1d9;--muted:#8b949e;
+  --green:#2da44e;--green-bg:rgba(45,164,78,.12);--red:#f85149;--red-bg:rgba(248,81,73,.12);
+  --yellow:#d29922;--yellow-bg:rgba(210,153,34,.12);--blue:#58a6ff;
+  --shadow:0 3px 12px rgba(0,0,0,.4);--shadow-hover:0 6px 20px rgba(0,0,0,.5);
+  --radius:12px;--transition:all .25s cubic-bezier(.4,0,.2,1);
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Helvetica,Arial,sans-serif;
+}
+[data-theme="light"]{
+  --bg:#f6f8fa;--surface:#ffffff;--surface2:#f0f2f5;--border:#d0d7de;--border-hover:#afb8c1;
+  --text:#1f2328;--text-secondary:#424a53;--muted:#656d76;
+  --green-bg:rgba(45,164,78,.08);--red-bg:rgba(248,81,73,.08);--yellow-bg:rgba(210,153,34,.08);
+  --shadow:0 3px 12px rgba(0,0,0,.08);--shadow-hover:0 6px 20px rgba(0,0,0,.12);
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6;transition:var(--transition);min-height:100vh;display:flex;flex-direction:column}
+.container{max-width:1280px;margin:0 auto;padding:24px;flex:1;width:100%}
+
+/* Header */
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;padding:16px 24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+.header-left{display:flex;align-items:center;gap:14px}
+.header-left img{height:40px}
+header h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
 header h1 span{color:var(--green)}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
-.stat{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px}
-.stat .label{color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.5px}
-.stat .value{font-size:32px;font-weight:700;margin-top:4px}
-.stat .value.green{color:var(--green)}.stat .value.red{color:var(--red)}.stat .value.yellow{color:var(--yellow)}
-.input-area{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:24px}
-.input-area label{display:block;color:var(--muted);margin-bottom:8px;font-size:14px}
-.input-area textarea{width:100%;height:120px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:12px;font-family:monospace;font-size:13px;resize:vertical}
-.input-area .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-.btn{background:var(--green);color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}
-.btn:hover{filter:brightness(1.1)}.btn.secondary{background:var(--surface);border:1px solid var(--border);color:var(--text)}
-input[type=text]{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:14px;flex:1;min-width:200px}
-table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
-th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);font-size:14px}
-th{background:var(--bg);color:var(--muted);font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
+.theme-toggle{background:var(--surface2);border:1px solid var(--border);color:var(--text);width:42px;height:42px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:20px;transition:var(--transition)}
+.theme-toggle:hover{border-color:var(--border-hover);transform:scale(1.08)}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:28px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;box-shadow:var(--shadow);transition:var(--transition);position:relative;overflow:hidden}
+.stat:hover{box-shadow:var(--shadow-hover);transform:translateY(-2px);border-color:var(--border-hover)}
+.stat::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.stat:nth-child(1)::before{background:var(--blue)}
+.stat:nth-child(2)::before{background:var(--red)}
+.stat:nth-child(3)::before{background:var(--yellow)}
+.stat:nth-child(4)::before{background:var(--green)}
+.stat .icon{font-size:28px;margin-bottom:8px}
+.stat .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+.stat .value{font-size:36px;font-weight:800;margin-top:4px;letter-spacing:-1px}
+.stat .value.green{color:var(--green)}.stat .value.red{color:var(--red)}.stat .value.yellow{color:var(--yellow)}.stat .value.blue{color:var(--blue)}
+
+/* Input Area */
+.input-area{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:28px;box-shadow:var(--shadow);overflow:hidden}
+.input-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;cursor:pointer;user-select:none;transition:var(--transition)}
+.input-header:hover{background:var(--surface2)}
+.input-header h3{font-size:14px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px}
+.input-header .chevron{transition:transform .25s;font-size:12px}
+.input-header .chevron.open{transform:rotate(180deg)}
+.input-body{padding:0 20px 20px;display:none}
+.input-body.open{display:block}
+.input-area label{display:block;color:var(--muted);margin-bottom:8px;font-size:13px}
+.input-area textarea{width:100%;height:120px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;font-size:13px;resize:vertical;transition:var(--transition)}
+.input-area textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+.input-area .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center}
+.btn{background:var(--green);color:#fff;border:none;padding:9px 18px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:var(--transition);display:inline-flex;align-items:center;gap:6px}
+.btn:hover{filter:brightness(1.15);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn.secondary{background:var(--surface2);border:1px solid var(--border);color:var(--text)}
+.btn.secondary:hover{border-color:var(--border-hover);background:var(--border)}
+input[type=text]{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:13px;flex:1;min-width:200px;transition:var(--transition);font-family:var(--font)}
+input[type=text]:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+
+/* Section headers */
+.section-header{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.section-header h2{font-size:18px;font-weight:700}
+.section-header .badge{background:var(--surface2);border:1px solid var(--border);padding:2px 10px;border-radius:20px;font-size:12px;color:var(--muted);font-weight:600}
+
+/* Table */
+.table-wrap{border-radius:var(--radius);border:1px solid var(--border);overflow:auto;box-shadow:var(--shadow);margin-bottom:32px}
+table{width:100%;border-collapse:collapse;background:var(--surface)}
+th,td{padding:12px 16px;text-align:left;font-size:13px;white-space:nowrap}
+th{background:var(--bg);color:var(--muted);font-weight:700;cursor:pointer;user-select:none;position:sticky;top:0;z-index:2;text-transform:uppercase;font-size:11px;letter-spacing:.5px;border-bottom:2px solid var(--border)}
 th:hover{color:var(--text)}
-th .arrow{margin-left:4px;font-size:11px}
-tr:hover{background:rgba(45,164,78,.06)}
-.spam{color:var(--red);font-weight:600}.no-spam{color:var(--green)}
-.score-bar{display:inline-block;height:8px;border-radius:4px;min-width:4px}
-.cluster-section{margin-top:32px}
-.cluster{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px}
-.cluster h3{font-size:16px;margin-bottom:8px}.cluster .sim{color:var(--yellow);font-size:13px}
-.cluster ul{list-style:none;padding:0}.cluster li{padding:4px 0;font-size:14px}
-.cluster li .best{color:var(--green);font-weight:600}
-.empty{text-align:center;color:var(--muted);padding:48px}
+th.sorted{color:var(--blue)}
+th .arrow{margin-left:4px;font-size:10px;opacity:.5}
+th.sorted .arrow{opacity:1;color:var(--blue)}
+td{border-bottom:1px solid var(--border)}
+tbody tr{transition:var(--transition)}
+tbody tr:nth-child(even){background:var(--surface2)}
+tbody tr:hover{background:var(--green-bg)}
+tbody tr:last-child td{border-bottom:none}
+
+/* Score pill */
+.score-pill{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:13px}
+.score-pill .bar{height:6px;border-radius:3px;min-width:4px;flex-shrink:0}
+.score-pill .num{min-width:24px}
+
+/* Risk pill */
+.risk-pill{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.risk-low{background:var(--green-bg);color:var(--green)}
+.risk-medium{background:var(--yellow-bg);color:var(--yellow)}
+.risk-high{background:var(--red-bg);color:var(--red)}
+
+/* Spam badge */
+.spam{color:var(--red);font-weight:700;display:inline-flex;align-items:center;gap:4px}
+.no-spam{color:var(--green);font-weight:600}
+
+/* PR link */
+.pr-link{color:var(--blue);text-decoration:none;font-weight:600;transition:var(--transition)}
+.pr-link:hover{text-decoration:underline}
+
+/* Cluster Section */
+.cluster-section{margin-top:8px}
+.cluster{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:12px;box-shadow:var(--shadow);transition:var(--transition)}
+.cluster:hover{box-shadow:var(--shadow-hover);border-color:var(--border-hover)}
+.cluster-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.cluster-head h3{font-size:15px;font-weight:700}
+.cluster .sim{background:var(--yellow-bg);color:var(--yellow);padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700}
+.cluster ul{list-style:none;padding:0}
+.cluster li{padding:8px 12px;font-size:13px;border-radius:8px;transition:var(--transition);display:flex;align-items:center;gap:8px}
+.cluster li:hover{background:var(--surface2)}
+.cluster li .best{color:var(--green);font-size:16px}
+.cluster li .pr-num{color:var(--blue);font-weight:700;min-width:40px}
+.cluster li .pr-score{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:700}
+.cluster li .connector{width:20px;height:2px;background:var(--border);flex-shrink:0}
+
+.empty{text-align:center;color:var(--muted);padding:48px;font-size:14px}
 #sections{display:none}
+
+/* Footer */
+footer{text-align:center;padding:24px;color:var(--muted);font-size:13px;border-top:1px solid var(--border);margin-top:auto}
+footer a{color:var(--blue);text-decoration:none}
+footer a:hover{text-decoration:underline}
+
+/* Responsive */
+@media(max-width:768px){
+  .container{padding:12px}
+  header{padding:12px 16px;flex-wrap:wrap;gap:12px}
+  header h1{font-size:20px}
+  .stats{grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat{padding:14px 16px}
+  .stat .value{font-size:28px}
+  .table-wrap{font-size:12px}
+  th,td{padding:8px 10px}
+  .input-area .actions{flex-direction:column}
+  input[type=text]{min-width:unset;width:100%}
+}
+@media(max-width:480px){
+  .stats{grid-template-columns:1fr 1fr}
+  .stat .value{font-size:24px}
+}
 </style>
 </head>
 <body>
 <div class="container">
   <header>
-    <h1>🔍 <span>Treliq</span> Dashboard</h1>
+    <div class="header-left">
+      <img src="logo.png" alt="Treliq" onerror="this.style.display='none'">
+      <h1><span>Treliq</span> Dashboard</h1>
+    </div>
+    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">🌙</button>
   </header>
 
   <div class="input-area">
-    <label>Load scan results (paste JSON or enter URL)</label>
-    <div class="actions">
-      <input type="text" id="urlInput" placeholder="URL to JSON (e.g. demo.json)">
-      <button class="btn" onclick="loadFromUrl()">Load URL</button>
-      <button class="btn secondary" onclick="loadDemo()">Load Demo</button>
+    <div class="input-header" onclick="toggleInput()">
+      <h3>📥 Load Scan Results <span class="chevron" id="inputChevron">▼</span></h3>
     </div>
-    <textarea id="jsonInput" placeholder='Paste treliq scan JSON here...'></textarea>
-    <div class="actions"><button class="btn" onclick="loadFromText()">Parse JSON</button></div>
+    <div class="input-body" id="inputBody">
+      <div class="actions" style="margin-top:0;margin-bottom:12px">
+        <input type="text" id="urlInput" placeholder="URL to JSON (e.g. demo.json)">
+        <button class="btn" onclick="loadFromUrl()">⬇ Load URL</button>
+        <button class="btn secondary" onclick="loadDemo()">📋 Demo</button>
+      </div>
+      <textarea id="jsonInput" placeholder='Paste treliq scan JSON here...'></textarea>
+      <div class="actions"><button class="btn" onclick="loadFromText()">Parse JSON</button></div>
+    </div>
   </div>
 
   <div id="sections">
     <div class="stats">
-      <div class="stat"><div class="label">Total PRs</div><div class="value" id="totalPRs">0</div></div>
-      <div class="stat"><div class="label">Spam Detected</div><div class="value red" id="spamCount">0</div></div>
-      <div class="stat"><div class="label">Duplicate Clusters</div><div class="value yellow" id="dupCount">0</div></div>
-      <div class="stat"><div class="label">Avg Score</div><div class="value green" id="avgScore">0</div></div>
+      <div class="stat"><div class="icon">📊</div><div class="label">Total PRs</div><div class="value blue" id="totalPRs">0</div></div>
+      <div class="stat"><div class="icon">🚩</div><div class="label">Spam Detected</div><div class="value red" id="spamCount">0</div></div>
+      <div class="stat"><div class="icon">🔗</div><div class="label">Duplicate Clusters</div><div class="value yellow" id="dupCount">0</div></div>
+      <div class="stat"><div class="icon">⭐</div><div class="label">Avg Score</div><div class="value green" id="avgScore">0</div></div>
     </div>
 
-    <h2 style="margin-bottom:12px">Pull Requests</h2>
+    <div class="section-header">
+      <h2>Pull Requests</h2>
+      <span class="badge" id="prBadge">0</span>
+    </div>
+    <div class="table-wrap">
     <table id="prTable">
       <thead><tr>
         <th data-col="number"># <span class="arrow"></span></th>
@@ -75,31 +196,85 @@ tr:hover{background:rgba(45,164,78,.06)}
         <th data-col="author">Author <span class="arrow"></span></th>
         <th data-col="filesChanged">Files <span class="arrow"></span></th>
         <th data-col="isSpam">Spam <span class="arrow"></span></th>
-        <th data-col="llmScore">LLM <span class="arrow"></span></th>
+        <th data-col="llmScore">LLM Risk <span class="arrow"></span></th>
         <th data-col="visionScore">Vision <span class="arrow"></span></th>
       </tr></thead>
       <tbody id="prBody"></tbody>
     </table>
+    </div>
 
     <div class="cluster-section">
-      <h2 style="margin-bottom:12px">Duplicate Clusters</h2>
+      <div class="section-header">
+        <h2>Duplicate Clusters</h2>
+        <span class="badge" id="clusterBadge">0</span>
+      </div>
       <div id="clusters"></div>
     </div>
   </div>
 </div>
 
+<footer>
+  Powered by <strong>Treliq</strong> — AI PR Triage &nbsp;·&nbsp;
+  <a href="https://github.com/mahsumurebe/treliq" target="_blank">GitHub</a>
+</footer>
+
 <script>
-let data=null,sortCol='totalScore',sortAsc=false;
+let data=null,sortCol='totalScore',sortAsc=false,inputOpen=true;
+
+// Theme
+function toggleTheme(){
+  const html=document.documentElement;
+  const next=html.dataset.theme==='dark'?'light':'dark';
+  html.dataset.theme=next;
+  document.querySelector('.theme-toggle').textContent=next==='dark'?'🌙':'☀️';
+  localStorage.setItem('treliq-theme',next);
+}
+(function(){
+  const saved=localStorage.getItem('treliq-theme');
+  if(saved){document.documentElement.dataset.theme=saved;document.querySelector('.theme-toggle').textContent=saved==='dark'?'🌙':'☀️';}
+})();
+
+// Input toggle
+function toggleInput(){
+  inputOpen=!inputOpen;
+  document.getElementById('inputBody').classList.toggle('open',inputOpen);
+  document.getElementById('inputChevron').classList.toggle('open',inputOpen);
+}
+// Start open
+document.getElementById('inputBody').classList.add('open');
+document.getElementById('inputChevron').classList.add('open');
+
+function collapseInput(){
+  inputOpen=false;
+  document.getElementById('inputBody').classList.remove('open');
+  document.getElementById('inputChevron').classList.remove('open');
+}
+
+function getLLMRisk(score){
+  if(score==null) return {level:'N/A',cls:''};
+  if(score>=70) return {level:'Low',cls:'risk-low'};
+  if(score>=40) return {level:'Med',cls:'risk-medium'};
+  return {level:'High',cls:'risk-high'};
+}
 
 function render(){
   if(!data)return;
   document.getElementById('sections').style.display='block';
-  document.getElementById('totalPRs').textContent=data.totalPRs||data.rankedPRs?.length||0;
+  const prs=data.rankedPRs||[];
+  document.getElementById('totalPRs').textContent=data.totalPRs||prs.length||0;
   document.getElementById('spamCount').textContent=data.spamCount||0;
   document.getElementById('dupCount').textContent=data.duplicateClusters?.length||0;
-  const prs=data.rankedPRs||[];
+  document.getElementById('prBadge').textContent=prs.length;
+  document.getElementById('clusterBadge').textContent=data.duplicateClusters?.length||0;
   const avg=prs.length?Math.round(prs.reduce((s,p)=>s+p.totalScore,0)/prs.length):0;
   document.getElementById('avgScore').textContent=avg;
+
+  // Update sort indicators
+  document.querySelectorAll('#prTable th').forEach(th=>{
+    const col=th.dataset.col;
+    th.classList.toggle('sorted',col===sortCol);
+    th.querySelector('.arrow').textContent=col===sortCol?(sortAsc?'▲':'▼'):'';
+  });
 
   const sorted=[...prs].sort((a,b)=>{
     let va=a[sortCol],vb=b[sortCol];
@@ -110,18 +285,20 @@ function render(){
     return sortAsc?(va>vb?1:-1):(va<vb?1:-1);
   });
 
+  const repo=data.repo||'';
   const tbody=document.getElementById('prBody');
   tbody.innerHTML=sorted.map(pr=>{
     const c=pr.totalScore>=70?'var(--green)':pr.totalScore>=40?'var(--yellow)':'var(--red)';
+    const risk=getLLMRisk(pr.llmScore);
     return `<tr>
-      <td><a href="https://github.com/${data.repo||''}/pull/${pr.number}" target="_blank" style="color:var(--blue)">#${pr.number}</a></td>
-      <td><span class="score-bar" style="background:${c};width:${pr.totalScore*.6}px"></span> ${pr.totalScore}</td>
-      <td title="${(pr.title||'').replace(/"/g,'&quot;')}">${(pr.title||'').slice(0,60)}</td>
-      <td>@${pr.author||''}</td>
+      <td><a class="pr-link" href="https://github.com/${repo}/pull/${pr.number}" target="_blank">#${pr.number}</a></td>
+      <td><span class="score-pill"><span class="bar" style="background:${c};width:${Math.max(pr.totalScore*.5,4)}px"></span><span class="num">${pr.totalScore}</span></span></td>
+      <td title="${(pr.title||'').replace(/"/g,'&quot;')}" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">${(pr.title||'').slice(0,65)}</td>
+      <td style="color:var(--muted)">@${pr.author||''}</td>
       <td>${pr.filesChanged||0}</td>
-      <td>${pr.isSpam?'<span class="spam">🚩 Spam</span>':'<span class="no-spam">Clean</span>'}</td>
-      <td>${pr.llmScore!=null?pr.llmScore:'-'}</td>
-      <td>${pr.visionAlignment==='unchecked'?'N/A':(pr.visionScore!=null?pr.visionScore:'No doc')}</td>
+      <td>${pr.isSpam?'<span class="spam">🚩 Spam</span>':'<span class="no-spam">✓ Clean</span>'}</td>
+      <td>${risk.cls?`<span class="risk-pill ${risk.cls}">${risk.level}</span>`:risk.level}</td>
+      <td>${pr.visionAlignment==='unchecked'?'N/A':(pr.visionScore!=null?pr.visionScore:'—')}</td>
     </tr>`;
   }).join('');
 
@@ -130,8 +307,20 @@ function render(){
   const clusters=data.duplicateClusters||[];
   if(!clusters.length){cd.innerHTML='<div class="empty">No duplicate clusters found</div>';return;}
   cd.innerHTML=clusters.map(c=>`<div class="cluster">
-    <h3>Cluster ${c.id} <span class="sim">(${(c.similarity*100).toFixed(1)}% similar)</span></h3>
-    <ul>${c.prs.map(p=>`<li>${p.number===c.bestPR?'<span class="best">⭐</span>':''} #${p.number} (${p.totalScore}) — ${(p.title||'').slice(0,70)}</li>`).join('')}</ul>
+    <div class="cluster-head">
+      <h3>Cluster ${c.id}</h3>
+      <span class="sim">${(c.similarity*100).toFixed(1)}% similar</span>
+    </div>
+    <ul>${c.prs.map(p=>{
+      const sc=p.totalScore>=70?'var(--green)':p.totalScore>=40?'var(--yellow)':'var(--red)';
+      return `<li>
+        ${p.number===c.bestPR?'<span class="best">⭐</span>':'<span style="width:16px;display:inline-block"></span>'}
+        <span class="connector"></span>
+        <span class="pr-num">#${p.number}</span>
+        <span class="pr-score" style="background:${p.totalScore>=70?'var(--green-bg)':p.totalScore>=40?'var(--yellow-bg)':'var(--red-bg)'};color:${sc}">${p.totalScore}</span>
+        <span style="color:var(--text-secondary)">${(p.title||'').slice(0,70)}</span>
+      </li>`;
+    }).join('')}</ul>
   </div>`).join('');
 }
 
@@ -144,14 +333,14 @@ document.querySelectorAll('#prTable th').forEach(th=>{
 });
 
 function loadFromText(){
-  try{data=JSON.parse(document.getElementById('jsonInput').value);render();}
+  try{data=JSON.parse(document.getElementById('jsonInput').value);render();collapseInput();}
   catch(e){alert('Invalid JSON: '+e.message);}
 }
 
 async function loadFromUrl(){
   const url=document.getElementById('urlInput').value.trim();
   if(!url)return;
-  try{const r=await fetch(url);data=await r.json();render();}
+  try{const r=await fetch(url);data=await r.json();render();collapseInput();}
   catch(e){alert('Failed to load: '+e.message);}
 }
 
@@ -160,8 +349,8 @@ function loadDemo(){
   loadFromUrl();
 }
 
-// Auto-load demo.json if available
-fetch('demo.json').then(r=>r.ok?r.json():null).then(d=>{if(d){data=d;render();}}).catch(()=>{});
+// Auto-load demo.json
+fetch('demo.json').then(r=>r.ok?r.json():null).then(d=>{if(d){data=d;render();collapseInput();}}).catch(()=>{});
 </script>
 </body>
 </html>
