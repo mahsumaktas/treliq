@@ -46,7 +46,7 @@ Respond with EXACTLY one JSON object (no markdown):
       throw new Error(`Gemini API error: ${res.status}`);
     }
 
-    const data = await res.json();
+    const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
     try {

@@ -21,19 +21,26 @@ export class DedupEngine {
     if (prs.length < 2) return [];
 
     // 1. Embed all PRs
-    console.log(`   Embedding ${prs.length} PRs...`);
+    console.error(`   Embedding ${prs.length} PRs...`);
     const embeddings: Map<number, number[]> = new Map();
+    let consecutiveFailures = 0;
 
     for (const pr of prs) {
+      if (consecutiveFailures >= 5) {
+        console.warn('   ⚠️  Too many embedding failures, skipping remaining PRs for dedup.');
+        break;
+      }
       try {
         const text = this.prToText(pr);
         const embedding = await this.embed(text);
         pr.embedding = embedding;
         embeddings.set(pr.number, embedding);
+        consecutiveFailures = 0;
         // Rate limit protection
         await new Promise(r => setTimeout(r, 250));
       } catch (err: any) {
-        console.warn(`   ⚠️  Failed to embed PR #${pr.number}: ${err.message}`);
+        consecutiveFailures++;
+        console.error(`   ⚠️  Failed to embed PR #${pr.number}: ${err.message}`);
       }
     }
 
@@ -133,7 +140,7 @@ export class DedupEngine {
       throw new Error(`Embedding API error: ${res.status} ${await res.text()}`);
     }
 
-    const data = await res.json();
+    const data = await res.json() as { embedding: { values: number[] } };
     return data.embedding.values;
   }
 

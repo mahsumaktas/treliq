@@ -1,9 +1,7 @@
-node_modules/
-dist/
-*.js.map
+node_modules
+dist
 .env
-.env.local
-data/lancedb/
-*.db
 .DS_Store
-coverage/
+*.log
+test-output.json
+data/

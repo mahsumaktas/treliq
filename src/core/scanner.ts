@@ -23,14 +23,14 @@ export class TreliqScanner {
 
   async scan(): Promise<TreliqResult> {
     const [owner, repo] = this.config.repo.split('/');
-    console.log(`📡 Fetching open PRs from ${this.config.repo}...`);
+    console.error(`📡 Fetching open PRs from ${this.config.repo}...`);
 
     // 1. Fetch PRs
     const prs = await this.fetchPRs();
-    console.log(`   Found ${prs.length} open PRs`);
+    console.error(`   Found ${prs.length} open PRs`);
 
     // 2. Score PRs
-    console.log('📊 Scoring PRs...');
+    console.error('📊 Scoring PRs...');
     const scored: ScoredPR[] = [];
     for (const pr of prs) {
       scored.push(await this.scoring.score(pr));
@@ -40,25 +40,25 @@ export class TreliqScanner {
     let clusters = [] as import('./types').DedupCluster[];
     if (this.config.geminiApiKey) {
       try {
-        console.log('🔍 Finding duplicates via embeddings...');
+        console.error('🔍 Finding duplicates via embeddings...');
         const dedup = new DedupEngine(
           this.config.duplicateThreshold,
           this.config.relatedThreshold,
           this.config.geminiApiKey,
         );
         clusters = await dedup.findDuplicates(scored);
-        console.log(`   Found ${clusters.length} duplicate clusters`);
+        console.error(`   Found ${clusters.length} duplicate clusters`);
       } catch (err: any) {
-        console.warn(`⚠️  Dedup failed (skipping): ${err.message}`);
+        console.error(`⚠️  Dedup failed (skipping): ${err.message}`);
       }
     } else {
-      console.log('⏭️  Skipping dedup (no GEMINI_API_KEY)');
+      console.error('⏭️  Skipping dedup (no GEMINI_API_KEY)');
     }
 
     // 4. Vision check
     if (this.config.geminiApiKey) {
       try {
-        console.log('🔭 Checking vision alignment...');
+        console.error('🔭 Checking vision alignment...');
         const visionDoc = await this.fetchVisionDoc(owner, repo);
         if (visionDoc) {
           const vision = new VisionChecker(visionDoc, this.config.geminiApiKey);
@@ -72,10 +72,10 @@ export class TreliqScanner {
             }
           }
         } else {
-          console.log('   No VISION.md or ROADMAP.md found, skipping');
+          console.error('   No VISION.md or ROADMAP.md found, skipping');
         }
       } catch (err: any) {
-        console.warn(`⚠️  Vision check failed (skipping): ${err.message}`);
+        console.error(`⚠️  Vision check failed (skipping): ${err.message}`);
       }
     }
 
