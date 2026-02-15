@@ -18,6 +18,7 @@ function makeConfig(opts: any): TreliqConfig {
     maxPRs: parseInt(opts.max ?? '500', 10),
     outputFormat: opts.format ?? 'table',
     comment: opts.comment ?? false,
+    trustContributors: opts.trustContributors ?? false,
   };
 }
 
@@ -97,6 +98,7 @@ program
   .option('-f, --format <format>', 'Output format: table|json|markdown', 'table')
   .option('-m, --max <number>', 'Max PRs to scan', '500')
   .option('--comment', 'Post results as PR comments', false)
+  .option('--trust-contributors', 'Exempt known contributors from spam detection', false)
   .action(async (opts) => {
     const config = makeConfig(opts);
     if (!config.token) {
@@ -149,7 +151,7 @@ program
       diffUrl: pr.diff_url,
     };
 
-    const engine = new ScoringEngine(config.geminiApiKey);
+    const engine = new ScoringEngine(config.geminiApiKey, config.trustContributors);
     const scored = await engine.score(prData);
 
     if (opts.format === 'json') {
@@ -197,7 +199,7 @@ program
     const scanner = new TreliqScanner(config);
     const prs = await scanner.fetchPRs();
     console.log(`📊 Scoring ${prs.length} PRs...`);
-    const engine = new ScoringEngine(config.geminiApiKey);
+    const engine = new ScoringEngine(config.geminiApiKey, config.trustContributors);
     const scored: ScoredPR[] = [];
     for (const pr of prs) scored.push(await engine.score(pr));
 

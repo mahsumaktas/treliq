@@ -10,9 +10,11 @@ async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 export class ScoringEngine {
   private geminiApiKey: string;
+  private trustContributors: boolean;
 
-  constructor(geminiApiKey?: string) {
+  constructor(geminiApiKey?: string, trustContributors = false) {
     this.geminiApiKey = geminiApiKey ?? process.env.GEMINI_API_KEY ?? '';
+    this.trustContributors = trustContributors;
   }
 
   async score(pr: PRData): Promise<ScoredPR> {
@@ -141,9 +143,12 @@ export class ScoringEngine {
     let spamScore = 0;
     const reasons: string[] = [];
 
-    // Known contributors get reduced spam penalty (not full exemption)
+    // Known contributors: full exemption if --trust-contributors, otherwise -1 penalty reduction
     const knownContributor = ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR'].includes(pr.authorAssociation);
-    let trustBonus = knownContributor ? -1 : 0; // 1 fewer spam point
+    if (knownContributor && this.trustContributors) {
+      return { name: 'spam', score: 100, weight: 0.15, reason: `Trusted contributor (${pr.authorAssociation})` };
+    }
+    let trustBonus = knownContributor ? -1 : 0;
 
     if (pr.additions + pr.deletions < 3) { spamScore += 2; reasons.push('<3 lines'); }
     else if (pr.additions + pr.deletions < 5) { spamScore++; reasons.push('<5 lines'); }

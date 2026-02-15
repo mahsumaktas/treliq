@@ -18,7 +18,7 @@ export class TreliqScanner {
   constructor(config: TreliqConfig) {
     this.config = config;
     this.octokit = new Octokit({ auth: config.token });
-    this.scoring = new ScoringEngine(config.geminiApiKey);
+    this.scoring = new ScoringEngine(config.geminiApiKey, config.trustContributors);
   }
 
   async scan(): Promise<TreliqResult> {

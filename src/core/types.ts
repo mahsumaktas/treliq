@@ -12,6 +12,7 @@ export interface TreliqConfig {
   maxPRs: number;             // Max PRs to scan (default: 500)
   outputFormat: 'table' | 'json' | 'markdown';
   comment: boolean;           // Post results as PR comment
+  trustContributors: boolean; // Exempt known contributors from spam detection
 }
 
 export interface PRData {
