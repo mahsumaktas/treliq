@@ -91,7 +91,7 @@ function outputResult(result: TreliqResult, format: string) {
 program
   .name('treliq')
   .description('AI-Powered PR Triage for Open Source Maintainers')
-  .version('0.2.0');
+  .version('0.3.0');
 
 program
   .command('scan')

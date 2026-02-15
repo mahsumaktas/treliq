@@ -1,68 +1,43 @@
 # Treliq Roadmap
 
-## v0.1 — Foundation (MVP)
-**Goal:** Scan a repo's open PRs, find duplicates, score them, output results.
+## v0.1 — Foundation ✅
 
-### Core Features
-1. **CLI Scanner** — `treliq scan --repo owner/repo`
-   - Fetch all open PRs via GitHub API
-   - Extract: title, description, diff stats, files changed, CI status
-   - Store PR embeddings in LanceDB
-
-2. **Semantic Dedup** — Find PR groups that solve the same problem
-   - Embed PR title + description + file paths using Gemini embedding-001
-   - Cosine similarity search (threshold: 0.85 = duplicate, 0.80 = related)
-   - Group duplicates into clusters
-
-3. **Multi-Signal Scoring** — Rate each PR on 8 dimensions
-   - CI status (pass/fail/pending)
-   - Diff size (additions + deletions)
-   - File count
-   - Commit count and message quality
-   - Contributor history (first PR? repeat contributor?)
-   - Issue reference (fixes #123?)
-   - Conventional commits compliance
-   - Spam heuristics (single file, tiny change, docs-only)
-
-4. **Vision Doc Alignment** — Optional VISION.md check
-   - If repo has VISION.md or ROADMAP.md, compare PR against it
-   - LLM judges: "Does this PR align with project direction?"
-   - Output: ✅ Aligned / ⚠️ Tangential / ❌ Off-roadmap
-
-5. **Output Formats**
-   - Terminal table (default)
-   - JSON (for automation)
-   - Markdown (for GitHub comments)
-   - GitHub PR comment (via `--comment` flag)
-
-### Tech Stack
-- TypeScript + Node.js
-- @octokit/rest (GitHub API)
-- @lancedb/lancedb (vector embeddings)
-- better-sqlite3 (state/cache)
-- Gemini API (embedding + review)
-- commander (CLI)
-
----
+- CLI scanner (`treliq scan --repo owner/repo`)
+- Semantic dedup via LanceDB + Gemini embeddings (0.85 duplicate / 0.80 related)
+- Multi-signal scoring (CI, diff size, commit quality, contributor history, issue refs, spam heuristics)
+- Vision doc alignment (VISION.md / ROADMAP.md check via LLM)
+- Output formats: table, JSON, markdown, GitHub comment
 
 ## v0.2 — LLM Integration ✅
-- ✅ Gemini AI scoring (quality + risk assessment)
-- ✅ Embedding-based dedup (gemini-embedding-001)
-- ✅ Blended scoring (40% heuristic + 60% LLM)
+
+- Gemini AI scoring (quality + risk assessment)
+- Embedding-based dedup (gemini-embedding-001)
+- Blended scoring (40% heuristic + 60% LLM)
 
 ## v0.3 — GitHub Integration + Dashboard ✅
-- ✅ GitHub Actions workflow (auto-scan on PR open)
-- ✅ `/treliq score`, `/treliq scan` PR comment commands
-- ✅ Static HTML dashboard (dark theme, sortable, no build step)
-- ✅ Single PR scoring (`treliq score -n 123`)
-- ✅ `--trust-contributors` flag
-- ✅ Live demo: mahsumaktas.github.io/treliq
 
-## v0.4 — Enterprise
-- Cross-repo analysis
-- Custom scoring rules
+- GitHub Actions workflow (auto-scan on PR open/synchronize)
+- PR comment commands (`/treliq score`, `/treliq scan`)
+- Static HTML dashboard (dark/light theme, sortable, no build step)
+- Single PR scoring (`treliq score -n 123`)
+- `--trust-contributors` flag for spam exemption
+- Incremental cache (only re-scores changed PRs)
+- 9-signal scoring (added test coverage, staleness, mergeability)
+- Live demo: [mahsumaktas.github.io/treliq](https://mahsumaktas.github.io/treliq/)
+
+## v0.4 — Real-Time & Persistence (Planned)
+
+- Webhook-based real-time PR updates
+- Incremental DB with SQLite for history tracking
+- Cross-repo analysis (scan multiple repos at once)
+- Custom scoring rule overrides
+
+## v0.5 — Distribution (Planned)
+
+- npm publish (`npm install -g treliq`)
+- GitHub Marketplace App (one-click install)
+- Slack / Discord notifications
 - Team-based triage queues
-- Slack/Discord notifications
 
 ---
 

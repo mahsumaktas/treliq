@@ -2,11 +2,18 @@
   <img src="docs/logo.png" alt="Treliq" width="120" />
 </p>
 
-<h1 align="center">Treliq</h1>
-
 <p align="center">
   <strong>AI-Powered PR Triage for Open Source Maintainers</strong>
 </p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <img src="https://img.shields.io/badge/version-0.3.0-green.svg" alt="Version 0.3.0" />
+  <img src="https://img.shields.io/badge/TypeScript-5.7-blue.svg" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node 20+" />
+</p>
+
+---
 
 > *"3,100 PRs. Which ones should I merge?"* — Every maintainer, eventually.
 
@@ -24,27 +31,17 @@ Code Review ≠ PR Triage. Treliq fills the gap.
 
 ## Features
 
-### v0.1 — Foundation
-- ✅ 🔍 **PR Dedup** — Semantic similarity detection across open PRs
-- ✅ 📊 **Multi-Signal Scoring** — Code quality, test coverage, CI status, commit quality, contributor history
-- ✅ 📋 **Vision Doc Alignment** — Check if PR matches project roadmap/guidelines
-- ✅ 🏆 **"Best PR" Selection** — When multiple PRs solve the same issue, pick the winner
-- ✅ 🚫 **Spam Filter** — Heuristic + AI spam/low-effort detection
-- ✅ 📦 **Batch Scan** — Analyze all open PRs at once
-
-### v0.2 — LLM Integration
-- ✅ 🤖 **Gemini AI Scoring** — Deep PR quality analysis via Gemini
-- ✅ 🔗 **Embedding Dedup** — Vector similarity for duplicate detection
-
-### v0.3 — PR Commands & Dashboard ✨ NEW
-- ✅ 💬 **PR Commands** — `/treliq score`, `/treliq scan` via GitHub Action
-- ✅ 🖥️ **Dashboard** — Static HTML dashboard for PR overview (gh-pages ready)
-- ✅ 🎯 **Single PR Scoring** — `treliq score -r owner/repo -n 123`
-- ✅ ⚡ **Auto-scan** — Automatically score new PRs on open/synchronize
+- 🔍 **Semantic PR Dedup** — Embedding similarity via Gemini to find duplicate/related PRs
+- 📊 **9-Signal Scoring** — CI, test coverage, merge conflicts, staleness, diff size, commit quality, contributor trust, issue refs, spam detection
+- 🤖 **LLM-Assisted Analysis** — Gemini Flash judges practical value, not authorship
+- 📋 **Vision Doc Alignment** — Checks PRs against VISION.md/ROADMAP.md
+- 💬 **GitHub Action + PR Commands** — `/treliq score`, `/treliq scan` from PR comments
+- 🖥️ **Static Dashboard** — Dark/light theme, sortable, no build step
+- ⚡ **Incremental Cache** — Only re-scores changed PRs
+- 🎯 **Single PR Scoring** — `treliq score -n 123`
+- 🛡️ **Smart Spam Detection** — With `--trust-contributors` option
 
 ## Quick Start
-
-### CLI
 
 ```bash
 # Score a single PR
@@ -53,16 +50,20 @@ npx treliq score -r owner/repo -n 123 -f markdown
 # Scan all open PRs
 npx treliq scan -r owner/repo -m 100 -f json
 
-# Find duplicates
+# Find duplicate PR clusters
 npx treliq dedup -r owner/repo
 
 # Trust known contributors (exempt from spam detection)
 npx treliq scan -r owner/repo --trust-contributors
 ```
 
-### GitHub Action
+**Required env vars:**
+- `GITHUB_TOKEN` — GitHub personal access token
+- `GEMINI_API_KEY` — From [Google AI Studio](https://aistudio.google.com/apikey)
 
-Add to your repo's `.github/workflows/treliq-scan.yml`:
+## GitHub Action Setup
+
+Add `.github/workflows/treliq.yml`:
 
 ```yaml
 name: Treliq PR Triage
@@ -93,7 +94,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          RESULT=$(npx treliq score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown)
+          RESULT=$(treliq score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown)
           echo "result<<EOF" >> $GITHUB_OUTPUT
           echo "$RESULT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -110,50 +111,57 @@ jobs:
           SCORE_RESULT: ${{ steps.score.outputs.result }}
 ```
 
-**Required secrets:**
-- `GEMINI_API_KEY` — Get from [Google AI Studio](https://aistudio.google.com/apikey)
-- `GITHUB_TOKEN` — Automatic, no setup needed
+**PR Commands:** Comment `/treliq score` or `/treliq scan` on any PR.
 
-**PR Commands:**
-- Comment `/treliq score` on any PR to get its triage score
-- Comment `/treliq scan` on any PR to scan all open PRs
-
-### Dashboard
-
-Open `dashboard/index.html` in a browser or deploy to GitHub Pages:
+## Dashboard
 
 **[Live Demo →](https://mahsumaktas.github.io/treliq/)**
 
 - Paste scan JSON or load from URL
 - Sortable PR table by score, files, author
 - Duplicate cluster visualization
-- Spam detection flags
+- Dark/light theme toggle
 
 Generate fresh data: `npm run dashboard`
+
+## Scoring Signals
+
+| Signal | Weight | Description |
+|--------|--------|-------------|
+| CI Status | 0.20 | Pass / fail / pending from GitHub Checks |
+| Test Coverage | 0.15 | Whether test files were changed alongside code |
+| Merge Conflicts | 0.15 | Mergeable / conflicting / unknown |
+| Contributor Trust | 0.15 | Author association (member, collaborator, first-timer) |
+| Spam Detection | 0.15 | Heuristic flags: tiny diff, docs-only, single-file |
+| Diff Size | 0.10 | Lines changed — penalizes extremes |
+| Staleness | 0.10 | Days since PR opened |
+| Issue References | 0.10 | Links to issues via `Fixes #123` etc. |
+| Commit Quality | 0.05 | Conventional commit format check |
+
+> Weights total > 1.0 because the final score is a weighted average, not a sum.
+
+When a Gemini API key is provided, an **LLM quality score** (0–100) is blended in at 60% LLM / 40% heuristic.
 
 ## Architecture
 
 ```
-├── CLI (Commander.js)        — scan, score, dedup commands
-├── GitHub Action             — Auto-scan + PR commands
-├── LanceDB                   — PR/Issue embeddings (serverless)
-├── Gemini API                — Deep review + vision alignment
-├── SQLite                    — State/history persistence
-├── Dashboard (Static HTML)   — Single-file, no build step
-└── Octokit                   — GitHub API integration
+┌─────────────────────────────────────────────┐
+│                   CLI (Commander.js)         │
+│            scan · score · dedup              │
+├──────────┬──────────┬───────────┬────────────┤
+│ Octokit  │ LanceDB  │ Gemini    │ SQLite     │
+│ GitHub   │ Vector   │ LLM +     │ Cache &    │
+│ API      │ Embeddings│ Embeddings│ State      │
+├──────────┴──────────┴───────────┴────────────┤
+│              Scoring Engine                   │
+│  9 signals → weighted avg → LLM blend        │
+├──────────────────────────────────────────────┤
+│  Vision Checker · Dedup Engine · Spam Filter  │
+├──────────────────────────────────────────────┤
+│  GitHub Action        │  Static Dashboard     │
+│  Auto-scan + Commands │  HTML, no build step  │
+└───────────────────────┴──────────────────────┘
 ```
-
-### Scoring Signals
-
-| Signal | Weight | Source |
-|--------|--------|--------|
-| Semantic similarity to other PRs | High | LanceDB embeddings |
-| CI pass/fail | High | GitHub Checks API |
-| Code quality (lint, complexity) | Medium | LLM analysis |
-| Commit message quality | Low | Conventional commits check |
-| Contributor history | Medium | GitHub API |
-| Breaking change detection | High | LLM diff analysis |
-| Vision doc alignment | High | LLM + VISION.md comparison |
 
 ## Inspired By
 

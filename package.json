@@ -16,16 +16,20 @@
     "start": "node dist/index.js",
     "dashboard": "npx tsx src/cli.ts scan -r openclaw/openclaw -m 50 -f json > dashboard/demo.json"
   },
+  "homepage": "https://mahsumaktas.github.io/treliq/",
+  "bugs": {
+    "url": "https://github.com/mahsumaktas/treliq/issues"
+  },
   "keywords": [
+    "pr-triage",
     "github",
-    "pull-request",
-    "triage",
-    "dedup",
     "ai",
-    "maintainer",
+    "dedup",
+    "scoring",
+    "maintainer-tools",
+    "typescript",
+    "pull-request",
     "open-source",
-    "pr-review",
-    "lancedb",
     "gemini"
   ],
   "author": "Mahsum Aktaş <mahsum@mahsumaktas.com>",
