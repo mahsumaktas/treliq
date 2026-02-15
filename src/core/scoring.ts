@@ -31,7 +31,7 @@ export class ScoringEngine {
     ) / signals.reduce((sum, s) => sum + s.weight, 0);
 
     const spamSignal = signals.find(s => s.name === 'spam');
-    const isSpam = (spamSignal?.score ?? 100) < 30;
+    const isSpam = (spamSignal?.score ?? 100) < 25;
 
     // LLM scoring
     let llmScore: number | undefined;
@@ -140,12 +140,20 @@ export class ScoringEngine {
   private scoreSpam(pr: PRData): SignalScore {
     let spamScore = 0;
     const reasons: string[] = [];
-    if (pr.commits === 1) { spamScore++; reasons.push('Single commit'); }
-    if (pr.filesChanged === 1) { spamScore++; reasons.push('Single file'); }
-    if (pr.additions + pr.deletions < 5) { spamScore++; reasons.push('<5 lines'); }
+
+    // Trusted contributors get a pass — merged PRs before = not spam
+    const trusted = ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR'];
+    if (trusted.includes(pr.authorAssociation)) {
+      return { name: 'spam', score: 100, weight: 0.15, reason: `Trusted contributor (${pr.authorAssociation})` };
+    }
+
+    if (pr.additions + pr.deletions < 3) { spamScore += 2; reasons.push('<3 lines'); }
+    else if (pr.additions + pr.deletions < 5) { spamScore++; reasons.push('<5 lines'); }
     if (!pr.hasIssueRef) { spamScore++; reasons.push('No issue ref'); }
+    if ((pr.body ?? '').length < 20) { spamScore++; reasons.push('No/short description'); }
     const docsOnly = pr.changedFiles.every(f => /readme|contributing|license|changelog|\.md$|\.txt$/i.test(f));
-    if (docsOnly && pr.changedFiles.length > 0) { spamScore++; reasons.push('Docs-only change'); }
-    return { name: 'spam', score: Math.max(0, 100 - spamScore * 20), weight: 0.15, reason: reasons.length > 0 ? reasons.join(', ') : 'No spam signals' };
+    if (docsOnly && pr.changedFiles.length > 0 && pr.additions + pr.deletions < 20) { spamScore++; reasons.push('Trivial docs-only change'); }
+    // Threshold: 4+ signals needed for spam (was 3)
+    return { name: 'spam', score: Math.max(0, 100 - spamScore * 25), weight: 0.15, reason: reasons.length > 0 ? reasons.join(', ') : 'No spam signals' };
   }
 }
