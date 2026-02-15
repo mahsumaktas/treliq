@@ -133,11 +133,18 @@ program
     const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: prNum });
     const { data: files } = await octokit.pulls.listFiles({ owner, repo, pull_number: prNum, per_page: 100 });
 
-    const ISSUE_REF = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+    const ISSUE_REF = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
+    const LOOSE_REF = /#(\d+)/g;
     const text = `${pr.title} ${pr.body ?? ''}`;
     const issueNumbers: number[] = [];
     let m: RegExpExecArray | null;
     while ((m = ISSUE_REF.exec(text)) !== null) issueNumbers.push(parseInt(m[1], 10));
+    if (issueNumbers.length === 0) {
+      while ((m = LOOSE_REF.exec(text)) !== null) {
+        const num = parseInt(m[1], 10);
+        if (num > 0 && num < 100000) issueNumbers.push(num);
+      }
+    }
 
     const prData = {
       number: pr.number, title: pr.title, body: pr.body ?? '',
