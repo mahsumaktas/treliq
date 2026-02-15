@@ -35,6 +35,13 @@ export interface PRData {
   issueNumbers: number[];
   changedFiles: string[];
   diffUrl: string;
+  hasTests: boolean;
+  testFilesChanged: string[];
+  ageInDays: number;
+  mergeable: 'mergeable' | 'conflicting' | 'unknown';
+  reviewState: 'approved' | 'changes_requested' | 'commented' | 'none';
+  reviewCount: number;
+  commentCount: number;
 }
 
 export interface SignalScore {

@@ -9,6 +9,7 @@ import { DedupEngine } from './dedup';
 import { VisionChecker } from './vision';
 
 const ISSUE_REF_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
+const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
 const LOOSE_ISSUE_REF = /#(\d+)/g;
 
 export class TreliqScanner {
@@ -131,12 +132,16 @@ export class TreliqScanner {
         let changedFiles: string[] = [];
         let ciStatus: PRData['ciStatus'] = 'unknown';
 
+        let mergeableState = 'unknown';
+        let commentCount = 0;
         try {
           const detail = await this.octokit.pulls.get({ owner, repo, pull_number: pr.number });
           filesChanged = detail.data.changed_files;
           additions = detail.data.additions;
           deletions = detail.data.deletions;
           commits = detail.data.commits;
+          mergeableState = detail.data.mergeable_state ?? 'unknown';
+          commentCount = detail.data.comments ?? 0;
         } catch { /* use defaults */ }
 
         try {
@@ -168,6 +173,29 @@ export class TreliqScanner {
             ciStatus = stateMap[status.data.state] ?? 'unknown';
           } catch { /* unknown */ }
         }
+
+        // Reviews
+        let reviewState: PRData['reviewState'] = 'none';
+        let reviewCount = 0;
+        try {
+          const { data: reviews } = await this.octokit.pulls.listReviews({ owner, repo, pull_number: pr.number });
+          reviewCount = reviews.length;
+          const states = reviews.map(r => r.state);
+          if (states.includes('APPROVED')) reviewState = 'approved';
+          else if (states.includes('CHANGES_REQUESTED')) reviewState = 'changes_requested';
+          else if (states.some(s => s === 'COMMENTED')) reviewState = 'commented';
+        } catch { /* skip */ }
+
+        // Test detection
+        const testFilesChanged = changedFiles.filter(f => TEST_PATTERNS.some(p => p.test(f)));
+        const hasTests = testFilesChanged.length > 0;
+
+        // Age
+        const ageInDays = Math.floor((Date.now() - new Date(pr.created_at).getTime()) / (1000 * 60 * 60 * 24));
+
+        // Mergeable
+        const mergeableMap: Record<string, PRData['mergeable']> = { clean: 'mergeable', unstable: 'mergeable', dirty: 'conflicting', blocked: 'mergeable' };
+        const mergeable: PRData['mergeable'] = mergeableMap[mergeableState] ?? 'unknown';
 
         // Issue references (strong: fixes/closes/resolves, weak: related to, loose: any #123)
         const text = `${pr.title} ${pr.body ?? ''}`;
@@ -206,6 +234,13 @@ export class TreliqScanner {
           issueNumbers,
           changedFiles,
           diffUrl: pr.diff_url,
+          hasTests,
+          testFilesChanged,
+          ageInDays,
+          mergeable,
+          reviewState,
+          reviewCount,
+          commentCount,
         });
       }
 

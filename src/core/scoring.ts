@@ -25,6 +25,9 @@ export class ScoringEngine {
       this.scoreContributor(pr),
       this.scoreIssueRef(pr),
       this.scoreSpam(pr),
+      this.scoreTestCoverage(pr),
+      this.scoreStaleness(pr),
+      this.scoreMergeability(pr),
     ];
 
     const heuristicScore = signals.reduce(

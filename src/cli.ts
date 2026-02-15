@@ -132,6 +132,19 @@ program
 
     const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: prNum });
     const { data: files } = await octokit.pulls.listFiles({ owner, repo, pull_number: prNum, per_page: 100 });
+    const { data: reviews } = await octokit.pulls.listReviews({ owner, repo, pull_number: prNum });
+
+    const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
+    const changedFileNames = files.map(f => f.filename);
+    const testFilesChanged = changedFileNames.filter(f => TEST_PATTERNS.some(p => p.test(f)));
+    const ageInDays = Math.floor((Date.now() - new Date(pr.created_at).getTime()) / (1000 * 60 * 60 * 24));
+    const mergeableMap: Record<string, 'mergeable' | 'conflicting' | 'unknown'> = { clean: 'mergeable', unstable: 'mergeable', dirty: 'conflicting', blocked: 'mergeable' };
+    const mergeable = mergeableMap[pr.mergeable_state ?? ''] ?? 'unknown';
+    const reviewStates = reviews.map(r => r.state);
+    let reviewState: 'approved' | 'changes_requested' | 'commented' | 'none' = 'none';
+    if (reviewStates.includes('APPROVED')) reviewState = 'approved';
+    else if (reviewStates.includes('CHANGES_REQUESTED')) reviewState = 'changes_requested';
+    else if (reviewStates.some(s => s === 'COMMENTED')) reviewState = 'commented';
 
     const ISSUE_REF = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
     const LOOSE_REF = /#(\d+)/g;
@@ -154,8 +167,15 @@ program
       filesChanged: pr.changed_files, additions: pr.additions, deletions: pr.deletions,
       commits: pr.commits, labels: pr.labels.map((l: any) => l.name ?? ''),
       ciStatus: 'unknown' as const, hasIssueRef: issueNumbers.length > 0,
-      issueNumbers, changedFiles: files.map(f => f.filename),
+      issueNumbers, changedFiles: changedFileNames,
       diffUrl: pr.diff_url,
+      hasTests: testFilesChanged.length > 0,
+      testFilesChanged,
+      ageInDays,
+      mergeable,
+      reviewState,
+      reviewCount: reviews.length,
+      commentCount: pr.comments ?? 0,
     };
 
     const engine = new ScoringEngine(config.geminiApiKey, config.trustContributors);

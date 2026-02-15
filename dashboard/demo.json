@@ -1,7 +1,7 @@
 {
   "repo": "openclaw/openclaw",
   "scannedAt": "2026-02-15T19:58:30.813Z",
-  "totalPRs": 50,
+  "totalPRs": 51,
   "spamCount": 0,
   "duplicateClusters": [
     {
@@ -4180,6 +4180,92 @@
       "llmRisk": "medium",
       "llmReason": "The PR addresses a CI stability issue and a cross-platform test failure, which are positive. It also introduces significant new functionality with Discord components v2. The risk is medium because of the large scope of changes, especially the new Discord components, which require careful review and testing to ensure stability and security. The test plan is not fully complete, as it only checks local tests and CI stability, but doesn't explicitly mention testing the new Discord components.",
       "duplicateGroup": 1
+    },
+    {
+      "number": 12094,
+      "title": "docs(examples): Linux browser-use reliability improvements for dynamic pages",
+      "body": "Related to #10994\n\n## Summary\nThis PR documents a Linux-first browser automation setup that keeps OpenClaw stable with Chrome CDP and dynamic pages:\n\n- user-level `systemd` units for `Xvfb` and Chrome CDP\n- dedicated automation profile sync script (copy default profile into isolated profile dir)\n- stale-ref-resistant browser workflow example (`snapshot -> ref lookup -> action -> retry`)\n\nThe goal is to improve reliability on Linux where users often hit:\n- CDP endpoint flakiness\n- display/auth issues\n- dynamic DOM ref invalidation between snapshot and action\n\n## What's Included\n- docs: Linux stable CDP setup and troubleshooting\n- service templates: user-level Xvfb and Chrome main CDP\n- example scripts:\n  - profile sync script\n  - X post helper with fresh-snapshot + retry logic\n\n## Platform Support\n- Core scripts (`openclaw-browser-safe-action.sh`, `openclaw-x-post.sh`) are **cross-platform** (Linux/macOS/WSL) - dependencies: bash, flock, jq\n- Service templates (`openclaw-xvfb.service`, `openclaw-chrome-main.service`) are **Linux-specific** (systemd)\n- macOS (launchd) and Windows (Task Scheduler) adapters can be added in follow-up PRs\n\n## Why\nOn dynamic pages, element refs from snapshot can change before action. A retry loop that always refreshes snapshot and resolves ref by semantic attributes (role/name) is significantly more stable than static ref reuse.\n\n## Notes\n- This PR intentionally avoids machine-specific values.\n- Paths and service names are template-based and configurable.\n- No user data, credentials, or local config files are included.\n\n## Test Steps\n1. Start user services (`openclaw-xvfb`, `openclaw-chrome-main`).\n2. Verify CDP endpoint responds on loopback.\n3. Run example script in dry-run mode.\n4. Confirm retry logic handles ref invalidation without failing hard.\n\n## Follow-ups (Optional)\n- add first-class docs link from browser CLI help\n- provide official retry helper in OpenClaw examples\n- add platform-specific adapters/docs for macOS (launchd) and Windows (Task Scheduler)\n\n<!-- greptile_comment -->\n\n<h2>Greptile Overview</h2>\n\n<h3>Greptile Summary</h3>\n\nThis PR adds Linux-focused documentation and examples intended to improve browser automation reliability on dynamic pages: a systemd user-service setup for Xvfb + Chrome CDP, a Chrome managed-policy hardening example, and bash scripts for syncing a Chrome profile and performing \u201cstale-ref-safe\u201d snapshot\u2192ref-resolve\u2192action retries.\n\nKey integration points are the new `examples/scripts/*` helpers which wrap `openclaw browser` commands (snapshot/click/type/evaluate) and the `examples/systemd/*` units which run a loopback-only CDP Chrome under a dedicated user-data-dir.\n\n<h3>Confidence Score: 3/5</h3>\n\n- This PR is close to mergeable but has a couple of issues that will break the documented workflow and one script at runtime.\n- The added docs reference paths that don\u2019t exist in the repo, and `openclaw-browser-safe-action.sh` contains a top-level array assignment using `local` under `set -u`, which will cause the script to exit when `--url` is used. Other changes are additive examples/services and don\u2019t appear to affect existing code paths.\n- examples/scripts/openclaw-browser-safe-action.sh, docs/linux-stable-cdp.md\n\n<!-- greptile_other_comments_section -->\n\n<sub>(2/5) Greptile learns from your feedback when you react with thumbs up/down!</sub>\n\n<!-- /greptile_comment -->\n",
+      "author": "mahsumaktas",
+      "authorAssociation": "NONE",
+      "createdAt": "2026-02-08T21:03:04Z",
+      "updatedAt": "2026-02-15T20:16:24Z",
+      "headRef": "feat/linux-stable-cdp-docs",
+      "baseRef": "main",
+      "filesChanged": 7,
+      "additions": 792,
+      "deletions": 0,
+      "commits": 3,
+      "labels": [
+        "docs",
+        "size: L"
+      ],
+      "ciStatus": "unknown",
+      "hasIssueRef": true,
+      "issueNumbers": [
+        10994
+      ],
+      "changedFiles": [
+        "docs/linux-stable-cdp.md",
+        "examples/policies/chrome-managed-hardening.json",
+        "examples/scripts/openclaw-browser-safe-action.sh",
+        "examples/scripts/openclaw-x-post.sh",
+        "examples/scripts/sync-main-profile-to-openclaw.sh",
+        "examples/systemd/openclaw-chrome-main.service",
+        "examples/systemd/openclaw-xvfb.service"
+      ],
+      "diffUrl": "https://github.com/openclaw/openclaw/pull/12094.diff",
+      "hasTests": false,
+      "testFilesChanged": [],
+      "ageInDays": 6,
+      "mergeable": "unknown",
+      "reviewState": "commented",
+      "reviewCount": 4,
+      "commentCount": 1,
+      "totalScore": 76,
+      "signals": [
+        {
+          "name": "ci_status",
+          "score": 40,
+          "weight": 0.2,
+          "reason": "CI: unknown"
+        },
+        {
+          "name": "diff_size",
+          "score": 60,
+          "weight": 0.1,
+          "reason": "792 lines changed (792+/0-)"
+        },
+        {
+          "name": "commit_quality",
+          "score": 90,
+          "weight": 0.05,
+          "reason": "Conventional commit format"
+        },
+        {
+          "name": "contributor",
+          "score": 30,
+          "weight": 0.15,
+          "reason": "mahsumaktas (NONE)"
+        },
+        {
+          "name": "issue_ref",
+          "score": 90,
+          "weight": 0.1,
+          "reason": "References: #10994"
+        },
+        {
+          "name": "spam",
+          "score": 100,
+          "weight": 0.15,
+          "reason": "No spam signals"
+        }
+      ],
+      "isSpam": false,
+      "spamReasons": [],
+      "visionAlignment": "unchecked",
+      "llmScore": 85,
+      "llmRisk": "medium",
+      "llmReason": "Comprehensive documentation and examples addressing a common reliability issue. The cross-platform nature of core scripts is a plus. Risk is medium due to the Linux-specific service templates and potential complexity of systemd configuration for some users. Follow-up PRs for macOS and Windows are needed for broader adoption."
     },
     {
       "number": 16562,
