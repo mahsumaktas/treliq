@@ -1,0 +1,42 @@
+{
+  "repo": "openclaw/openclaw",
+  "scannedAt": "2026-02-15T17:00:00Z",
+  "totalPRs": 12,
+  "spamCount": 2,
+  "duplicateClusters": [
+    {
+      "id": 1,
+      "prs": [
+        {"number": 17100, "title": "Fix memory leak in websocket handler", "totalScore": 82, "author": "alice"},
+        {"number": 17105, "title": "Patch WS connection memory leak", "totalScore": 68, "author": "bob"}
+      ],
+      "bestPR": 17100,
+      "similarity": 0.91,
+      "reason": "Both fix the same websocket memory leak"
+    },
+    {
+      "id": 2,
+      "prs": [
+        {"number": 17200, "title": "Add dark mode toggle to settings", "totalScore": 75, "author": "carol"},
+        {"number": 17210, "title": "Implement dark theme support", "totalScore": 71, "author": "dave"},
+        {"number": 17215, "title": "dark mode css", "totalScore": 22, "author": "spammer1"}
+      ],
+      "bestPR": 17200,
+      "similarity": 0.87,
+      "reason": "All implement dark mode/theme support"
+    }
+  ],
+  "rankedPRs": [
+    {"number": 17272, "title": "Refactor plugin loader for better error handling", "author": "maintainer1", "totalScore": 91, "filesChanged": 8, "additions": 245, "deletions": 89, "commits": 3, "isSpam": false, "spamReasons": [], "llmScore": 88, "llmRisk": "low", "visionAlignment": "aligned", "visionScore": 95, "ciStatus": "success", "labels": ["enhancement"], "signals": []},
+    {"number": 17100, "title": "Fix memory leak in websocket handler", "author": "alice", "totalScore": 82, "filesChanged": 3, "additions": 45, "deletions": 12, "commits": 1, "isSpam": false, "spamReasons": [], "llmScore": 80, "llmRisk": "low", "visionAlignment": "aligned", "visionScore": 78, "ciStatus": "success", "labels": ["bug"], "signals": [], "duplicateGroup": 1},
+    {"number": 17200, "title": "Add dark mode toggle to settings", "author": "carol", "totalScore": 75, "filesChanged": 12, "additions": 320, "deletions": 45, "commits": 5, "isSpam": false, "spamReasons": [], "llmScore": 72, "llmRisk": "low", "visionAlignment": "tangential", "visionScore": 60, "ciStatus": "success", "labels": ["feature"], "signals": [], "duplicateGroup": 2},
+    {"number": 17210, "title": "Implement dark theme support", "author": "dave", "totalScore": 71, "filesChanged": 15, "additions": 410, "deletions": 30, "commits": 8, "isSpam": false, "spamReasons": [], "llmScore": 65, "llmRisk": "medium", "visionAlignment": "tangential", "visionScore": 58, "ciStatus": "success", "labels": ["feature"], "signals": [], "duplicateGroup": 2},
+    {"number": 17105, "title": "Patch WS connection memory leak", "author": "bob", "totalScore": 68, "filesChanged": 2, "additions": 30, "deletions": 8, "commits": 1, "isSpam": false, "spamReasons": [], "llmScore": 70, "llmRisk": "low", "visionAlignment": "aligned", "visionScore": 75, "ciStatus": "pending", "labels": ["bug"], "signals": [], "duplicateGroup": 1},
+    {"number": 17250, "title": "Update documentation for API v2 endpoints", "author": "contributor3", "totalScore": 65, "filesChanged": 4, "additions": 120, "deletions": 50, "commits": 2, "isSpam": false, "spamReasons": [], "llmScore": 60, "llmRisk": "low", "visionAlignment": "aligned", "visionScore": 70, "ciStatus": "success", "labels": ["docs"], "signals": []},
+    {"number": 17260, "title": "Add rate limiting middleware", "author": "secdev", "totalScore": 58, "filesChanged": 5, "additions": 180, "deletions": 10, "commits": 3, "isSpam": false, "spamReasons": [], "llmScore": 55, "llmRisk": "medium", "visionAlignment": "tangential", "visionScore": 45, "ciStatus": "failure", "labels": ["security"], "signals": []},
+    {"number": 17270, "title": "Bump lodash from 4.17.20 to 4.17.21", "author": "dependabot", "totalScore": 45, "filesChanged": 1, "additions": 3, "deletions": 3, "commits": 1, "isSpam": false, "spamReasons": [], "llmScore": null, "llmRisk": null, "visionAlignment": "unchecked", "visionScore": null, "ciStatus": "success", "labels": ["dependencies"], "signals": []},
+    {"number": 17230, "title": "Add my awesome feature please merge", "author": "newbie99", "totalScore": 28, "filesChanged": 1, "additions": 500, "deletions": 0, "commits": 1, "isSpam": true, "spamReasons": ["No tests", "Single commit dump", "No issue reference"], "llmScore": 20, "llmRisk": "high", "visionAlignment": "off-roadmap", "visionScore": 10, "ciStatus": "failure", "labels": [], "signals": []},
+    {"number": 17215, "title": "dark mode css", "author": "spammer1", "totalScore": 22, "filesChanged": 1, "additions": 15, "deletions": 0, "commits": 1, "isSpam": true, "spamReasons": ["Minimal effort", "No description", "Duplicate of existing PR"], "llmScore": 15, "llmRisk": "high", "visionAlignment": "off-roadmap", "visionScore": 5, "ciStatus": "failure", "labels": [], "signals": [], "duplicateGroup": 2}
+  ],
+  "summary": "12 PRs scanned. 2 spam detected. 2 duplicate clusters found. Top PR: #17272 (91/100) — Refactor plugin loader."
+}
