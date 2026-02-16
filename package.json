@@ -7,8 +7,21 @@
   "bin": {
     "treliq": "dist/cli.js"
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "dev": "ts-node src/index.ts",
     "cli": "ts-node src/cli.ts",
     "test": "jest",
@@ -40,6 +53,12 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/mahsumaktas/treliq.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",

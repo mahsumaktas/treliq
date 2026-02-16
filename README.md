@@ -9,10 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/version-0.4.0-2DA44E?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Node.js-≥18-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
   <a href="https://github.com/mahsumaktas/treliq/stargazers"><img src="https://img.shields.io/github/stars/mahsumaktas/treliq?style=flat-square" alt="Stars" /></a>
 </p>
 
