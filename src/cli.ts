@@ -9,8 +9,23 @@ import { createProvider, type LLMProvider, type ProviderName } from './core/prov
 
 const program = new Command();
 
-function resolveProvider(opts: any): LLMProvider | undefined {
-  const providerName: ProviderName = opts.provider ?? 'gemini';
+interface CLIOpts {
+  repo: string;
+  token?: string;
+  geminiKey?: string;
+  provider?: string;
+  apiKey?: string;
+  format?: string;
+  max?: string;
+  comment?: boolean;
+  trustContributors?: boolean;
+  noCache?: boolean;
+  cacheFile?: string;
+  pr?: string;
+}
+
+function resolveProvider(opts: CLIOpts): LLMProvider | undefined {
+  const providerName = (opts.provider ?? 'gemini') as ProviderName;
   const envKeyMap: Record<ProviderName, string> = {
     gemini: 'GEMINI_API_KEY',
     openai: 'OPENAI_API_KEY',
@@ -31,17 +46,38 @@ function resolveProvider(opts: any): LLMProvider | undefined {
   return createProvider(providerName, apiKey, embeddingFallback);
 }
 
-function makeConfig(opts: any): TreliqConfig {
+function validateRepo(repo: string): void {
+  const parts = repo.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    console.error('❌ Invalid repo format. Expected: owner/repo');
+    process.exit(1);
+  }
+}
+
+function validateMaxPRs(maxStr: string): number {
+  const maxPRs = parseInt(maxStr, 10);
+  if (isNaN(maxPRs) || maxPRs < 1 || maxPRs > 5000) {
+    console.error('❌ Invalid --max value. Must be 1-5000.');
+    process.exit(1);
+  }
+  return maxPRs;
+}
+
+function makeConfig(opts: CLIOpts): TreliqConfig {
+  validateRepo(opts.repo);
+  const token = opts.token || process.env.GITHUB_TOKEN || '';
   const provider = resolveProvider(opts);
+  const maxPRs = validateMaxPRs(opts.max ?? '500');
+
   return {
     repo: opts.repo,
-    token: opts.token || process.env.GITHUB_TOKEN || '',
+    token,
     provider,
     geminiApiKey: opts.geminiKey || process.env.GEMINI_API_KEY,
     duplicateThreshold: 0.85,
     relatedThreshold: 0.80,
-    maxPRs: parseInt(opts.max ?? '500', 10),
-    outputFormat: opts.format ?? 'table',
+    maxPRs,
+    outputFormat: (opts.format ?? 'table') as TreliqConfig['outputFormat'],
     comment: opts.comment ?? false,
     trustContributors: opts.trustContributors ?? false,
     useCache: opts.noCache ? false : true,
@@ -113,6 +149,36 @@ function outputResult(result: TreliqResult, format: string) {
   console.log(`\n📝 ${result.summary}`);
 }
 
+function outputScoredPR(scored: ScoredPR, format: string) {
+  if (format === 'json') {
+    console.log(JSON.stringify(scored, null, 2));
+  } else if (format === 'markdown') {
+    console.log(`## 🎯 Treliq Score — PR #${scored.number}\n`);
+    console.log(`**${scored.title}** by @${scored.author}\n`);
+    console.log(`| Metric | Value |`);
+    console.log(`|--------|-------|`);
+    console.log(`| **Total Score** | **${scored.totalScore}/100** |`);
+    console.log(`| Spam | ${scored.isSpam ? '🚩 Spam' : '✅ Clean'} |`);
+    console.log(`| Files Changed | ${scored.filesChanged} |`);
+    console.log(`| +${scored.additions} / -${scored.deletions} | ${scored.commits} commits |`);
+    if (scored.llmScore != null) console.log(`| LLM Quality | ${scored.llmScore}/100 (${scored.llmRisk}) |`);
+    if (scored.visionScore != null) console.log(`| Vision Alignment | ${scored.visionScore}/100 (${scored.visionAlignment}) |`);
+    console.log(`\n### Signal Breakdown\n`);
+    console.log(`| Signal | Score | Weight | Reason |`);
+    console.log(`|--------|-------|--------|--------|`);
+    for (const s of scored.signals) {
+      console.log(`| ${s.name} | ${s.score}/100 | ${s.weight} | ${s.reason} |`);
+    }
+  } else {
+    console.log(`\n🎯 PR #${scored.number}: ${scored.title}`);
+    console.log(`   Score: ${scored.totalScore}/100 | Spam: ${scored.isSpam ? 'Yes' : 'No'}\n`);
+    console.log('   Signals:');
+    for (const s of scored.signals) {
+      console.log(`     ${s.name.padEnd(16)} ${String(s.score).padStart(3)}/100 (w: ${s.weight}) — ${s.reason}`);
+    }
+  }
+}
+
 program
   .name('treliq')
   .description('AI-Powered PR Triage for Open Source Maintainers')
@@ -132,7 +198,7 @@ program
   .option('--trust-contributors', 'Exempt known contributors from spam detection', false)
   .option('--no-cache', 'Force full rescan, ignore cache')
   .option('--cache-file <path>', 'Custom cache file path', '.treliq-cache.json')
-  .action(async (opts) => {
+  .action(async (opts: CLIOpts) => {
     const config = makeConfig(opts);
     if (!config.token) {
       console.error('❌ GITHUB_TOKEN required. Set via env or --token flag.');
@@ -152,108 +218,30 @@ program
   .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('-f, --format <format>', 'Output format', 'table')
-  .action(async (opts) => {
+  .action(async (opts: CLIOpts) => {
     const config = makeConfig(opts);
     if (!config.token) {
       console.error('❌ GITHUB_TOKEN required.');
       process.exit(1);
     }
-    const scanner = new TreliqScanner({ ...config, maxPRs: 1 });
-    // Fetch just this PR
-    const { Octokit } = await import('@octokit/rest');
-    const octokit = new Octokit({ auth: config.token });
-    const [owner, repo] = config.repo.split('/');
-    const prNum = parseInt(opts.pr, 10);
 
-    const { data: pr } = await octokit.pulls.get({ owner, repo, pull_number: prNum });
-    const { data: files } = await octokit.pulls.listFiles({ owner, repo, pull_number: prNum, per_page: 100 });
-    const { data: reviews } = await octokit.pulls.listReviews({ owner, repo, pull_number: prNum });
-
-    const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
-    const changedFileNames = files.map(f => f.filename);
-    const testFilesChanged = changedFileNames.filter(f => TEST_PATTERNS.some(p => p.test(f)));
-    const ageInDays = Math.floor((Date.now() - new Date(pr.created_at).getTime()) / (1000 * 60 * 60 * 24));
-    const mergeableMap: Record<string, 'mergeable' | 'conflicting' | 'unknown'> = { clean: 'mergeable', unstable: 'mergeable', dirty: 'conflicting', blocked: 'mergeable' };
-    const mergeable = mergeableMap[pr.mergeable_state ?? ''] ?? 'unknown';
-    const reviewStates = reviews.map(r => r.state);
-    let reviewState: 'approved' | 'changes_requested' | 'commented' | 'none' = 'none';
-    if (reviewStates.includes('APPROVED')) reviewState = 'approved';
-    else if (reviewStates.includes('CHANGES_REQUESTED')) reviewState = 'changes_requested';
-    else if (reviewStates.some(s => s === 'COMMENTED')) reviewState = 'commented';
-
-    const ISSUE_REF = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
-    const LOOSE_REF = /#(\d+)/g;
-    const text = `${pr.title} ${pr.body ?? ''}`;
-    const issueNumbers: number[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = ISSUE_REF.exec(text)) !== null) issueNumbers.push(parseInt(m[1], 10));
-    if (issueNumbers.length === 0) {
-      while ((m = LOOSE_REF.exec(text)) !== null) {
-        const num = parseInt(m[1], 10);
-        if (num > 0 && num < 100000) issueNumbers.push(num);
-      }
+    const prNum = parseInt(opts.pr!, 10);
+    if (isNaN(prNum) || prNum < 1) {
+      console.error('❌ Invalid PR number.');
+      process.exit(1);
     }
 
-    const prData = {
-      number: pr.number, title: pr.title, body: pr.body ?? '',
-      author: pr.user?.login ?? 'unknown', authorAssociation: pr.author_association,
-      createdAt: pr.created_at, updatedAt: pr.updated_at,
-      headRef: pr.head.ref, baseRef: pr.base.ref,
-      filesChanged: pr.changed_files, additions: pr.additions, deletions: pr.deletions,
-      commits: pr.commits, labels: pr.labels.map((l: any) => l.name ?? ''),
-      ciStatus: await (async () => {
-        try {
-          const checks = await octokit.checks.listForRef({ owner, repo, ref: pr.head.sha });
-          if (checks.data.total_count > 0) {
-            const conclusions = checks.data.check_runs.map((c: any) => c.conclusion);
-            if (conclusions.some((c: any) => c === 'failure')) return 'failure' as const;
-            if (conclusions.every((c: any) => c === 'success' || c === 'skipped')) return 'success' as const;
-            return 'pending' as const;
-          }
-          return 'unknown' as const;
-        } catch { return 'unknown' as const; }
-      })(), hasIssueRef: issueNumbers.length > 0,
-      issueNumbers, changedFiles: changedFileNames,
-      diffUrl: pr.diff_url,
-      hasTests: testFilesChanged.length > 0,
-      testFilesChanged,
-      ageInDays,
-      mergeable,
-      reviewState,
-      reviewCount: reviews.length,
-      commentCount: pr.comments ?? 0,
-    };
+    // Use scanner's fetchPRDetails to avoid code duplication
+    const scanner = new TreliqScanner({ ...config, maxPRs: 1 });
+    const prs = await scanner.fetchPRDetails([prNum]);
+    if (prs.length === 0) {
+      console.error(`❌ PR #${prNum} not found or could not be fetched.`);
+      process.exit(1);
+    }
 
     const engine = new ScoringEngine(config.provider, config.trustContributors);
-    const scored = await engine.score(prData);
-
-    if (opts.format === 'json') {
-      console.log(JSON.stringify(scored, null, 2));
-    } else if (opts.format === 'markdown') {
-      console.log(`## 🎯 Treliq Score — PR #${scored.number}\n`);
-      console.log(`**${scored.title}** by @${scored.author}\n`);
-      console.log(`| Metric | Value |`);
-      console.log(`|--------|-------|`);
-      console.log(`| **Total Score** | **${scored.totalScore}/100** |`);
-      console.log(`| Spam | ${scored.isSpam ? '🚩 Spam' : '✅ Clean'} |`);
-      console.log(`| Files Changed | ${scored.filesChanged} |`);
-      console.log(`| +${scored.additions} / -${scored.deletions} | ${scored.commits} commits |`);
-      if (scored.llmScore != null) console.log(`| LLM Quality | ${scored.llmScore}/100 (${scored.llmRisk}) |`);
-      if (scored.visionScore != null) console.log(`| Vision Alignment | ${scored.visionScore}/100 (${scored.visionAlignment}) |`);
-      console.log(`\n### Signal Breakdown\n`);
-      console.log(`| Signal | Score | Weight | Reason |`);
-      console.log(`|--------|-------|--------|--------|`);
-      for (const s of scored.signals) {
-        console.log(`| ${s.name} | ${s.score}/100 | ${s.weight} | ${s.reason} |`);
-      }
-    } else {
-      console.log(`\n🎯 PR #${scored.number}: ${scored.title}`);
-      console.log(`   Score: ${scored.totalScore}/100 | Spam: ${scored.isSpam ? 'Yes' : 'No'}\n`);
-      console.log('   Signals:');
-      for (const s of scored.signals) {
-        console.log(`     ${s.name.padEnd(16)} ${String(s.score).padStart(3)}/100 (w: ${s.weight}) — ${s.reason}`);
-      }
-    }
+    const scored = await engine.score(prs[0]);
+    outputScoredPR(scored, opts.format ?? 'table');
   });
 
 program
@@ -266,7 +254,7 @@ program
   .option('--api-key <key>', 'API key for the selected provider')
   .option('-f, --format <format>', 'Output format', 'table')
   .option('-m, --max <number>', 'Max PRs', '500')
-  .action(async (opts) => {
+  .action(async (opts: CLIOpts) => {
     const config = makeConfig(opts);
     if (!config.token) { console.error('❌ GITHUB_TOKEN required.'); process.exit(1); }
     if (!config.provider) { console.error('❌ API key required for dedup. Set via --api-key or env var.'); process.exit(1); }

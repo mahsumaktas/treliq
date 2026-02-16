@@ -3,6 +3,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { createHash } from 'crypto';
 import type { ScoredPR } from './types';
 
 export interface CachedPR {
@@ -14,14 +15,29 @@ export interface CachedPR {
 export interface TreliqCache {
   repo: string;
   lastScan: string;
+  configHash: string;
   prs: Record<string, CachedPR>;
 }
 
-export function loadCache(cacheFile: string, repo: string): TreliqCache | null {
+/** Generate a hash of config options that affect scoring results */
+export function configHash(opts: { trustContributors: boolean; providerName?: string }): string {
+  const input = JSON.stringify({
+    trustContributors: opts.trustContributors,
+    provider: opts.providerName ?? 'none',
+  });
+  return createHash('md5').update(input).digest('hex').slice(0, 8);
+}
+
+export function loadCache(cacheFile: string, repo: string, hash?: string): TreliqCache | null {
   if (!existsSync(cacheFile)) return null;
   try {
     const raw = JSON.parse(readFileSync(cacheFile, 'utf-8')) as TreliqCache;
     if (raw.repo !== repo) return null;
+    // Invalidate cache if config changed (backwards compatible with old caches without hash)
+    if (hash && raw.configHash && raw.configHash !== hash) {
+      console.error('📦 Cache invalidated (config changed)');
+      return null;
+    }
     return raw;
   } catch {
     return null;
@@ -33,10 +49,12 @@ export function saveCache(
   repo: string,
   scored: ScoredPR[],
   shaMap: Map<number, string>,
+  hash?: string,
 ): void {
   const cache: TreliqCache = {
     repo,
     lastScan: new Date().toISOString(),
+    configHash: hash ?? '',
     prs: {},
   };
   for (const pr of scored) {

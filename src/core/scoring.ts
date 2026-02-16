@@ -36,10 +36,10 @@ export class ScoringEngine {
       this.scoreBreakingChange(pr),
     ];
 
-    const heuristicScore = signals.reduce(
-      (sum, s) => sum + s.score * s.weight,
-      0
-    ) / signals.reduce((sum, s) => sum + s.weight, 0);
+    const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
+    const heuristicScore = totalWeight > 0
+      ? signals.reduce((sum, s) => sum + s.score * s.weight, 0) / totalWeight
+      : 0;
 
     const spamSignal = signals.find(s => s.name === 'spam');
     const isSpam = (spamSignal?.score ?? 100) < 25;
@@ -56,7 +56,7 @@ export class ScoringEngine {
         llmRisk = llmResult.risk;
         llmReason = llmResult.reason;
       } catch (err: any) {
-        // Graceful degrade
+        console.warn(`⚠️  LLM scoring failed for PR #${pr.number}: ${err.message}`);
       }
     }
 
@@ -87,15 +87,17 @@ export class ScoringEngine {
     const text = await this.provider!.generateText(prompt, { temperature: 0.1, maxTokens: 200 });
 
     const match = text.match(/\{[^}]+\}/);
-    if (match) {
+    if (!match) throw new Error('No JSON found in LLM response');
+    try {
       const parsed = JSON.parse(match[0]);
       return {
         score: Math.max(0, Math.min(100, Number(parsed.score) || 50)),
         risk: ['low', 'medium', 'high'].includes(parsed.risk) ? parsed.risk : 'medium',
-        reason: parsed.reason ?? '',
+        reason: String(parsed.reason ?? ''),
       };
+    } catch (parseErr: any) {
+      throw new Error(`JSON parse failed: ${parseErr.message}`);
     }
-    throw new Error('Parse failed');
   }
 
   private scoreCI(pr: PRData): SignalScore {

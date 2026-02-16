@@ -20,10 +20,10 @@ export class GeminiProvider implements LLMProvider {
 
   async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
     await sleep(100);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${this.apiKey}`;
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
@@ -39,10 +39,10 @@ export class GeminiProvider implements LLMProvider {
 
   async generateEmbedding(text: string): Promise<number[]> {
     await sleep(100);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${this.apiKey}`;
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent';
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify({
         model: 'models/gemini-embedding-001',
         content: { parts: [{ text }] },
@@ -97,7 +97,11 @@ export class OpenAIProvider implements LLMProvider {
     });
     if (!res.ok) throw new Error(`OpenAI Embedding ${res.status}`);
     const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
-    return data.data?.[0]?.embedding ?? [];
+    const embedding = data.data?.[0]?.embedding ?? [];
+    if (embedding.length === 0) {
+      throw new Error('Empty embedding returned from OpenAI');
+    }
+    return embedding;
   }
 }
 

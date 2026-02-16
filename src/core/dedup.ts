@@ -10,10 +10,10 @@ export class DedupEngine {
   private relatedThreshold: number;
   private provider: LLMProvider;
 
-  constructor(duplicateThreshold = 0.85, relatedThreshold = 0.80, provider?: LLMProvider) {
+  constructor(duplicateThreshold = 0.85, relatedThreshold = 0.80, provider: LLMProvider) {
     this.duplicateThreshold = duplicateThreshold;
     this.relatedThreshold = relatedThreshold;
-    this.provider = provider!;
+    this.provider = provider;
   }
 
   async findDuplicates(prs: ScoredPR[]): Promise<DedupCluster[]> {
@@ -136,6 +136,8 @@ export class DedupEngine {
       normA += a[i] * a[i];
       normB += b[i] * b[i];
     }
-    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    if (denom === 0) return 0;
+    return dot / denom;
   }
 }

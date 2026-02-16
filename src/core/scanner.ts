@@ -3,16 +3,35 @@
  */
 
 import { Octokit } from '@octokit/rest';
-import type { TreliqConfig, PRData, ScoredPR, TreliqResult } from './types';
+import type { TreliqConfig, PRData, ScoredPR, TreliqResult, DedupCluster } from './types';
 import { ScoringEngine } from './scoring';
 import { DedupEngine } from './dedup';
 import { VisionChecker } from './vision';
-import { loadCache, saveCache, getCacheHit, type PRListItem } from './cache';
+import { loadCache, saveCache, getCacheHit, configHash, type PRListItem } from './cache';
 import { getReputation } from './reputation';
 
 const ISSUE_REF_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
-const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
+export const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
 const LOOSE_ISSUE_REF = /#(\d+)/g;
+
+/** Extract issue numbers from text using strong and loose patterns */
+function extractIssueNumbers(text: string): number[] {
+  const issueNumbers: number[] = [];
+  for (const match of text.matchAll(ISSUE_REF_PATTERN)) {
+    issueNumbers.push(parseInt(match[1], 10));
+  }
+  if (issueNumbers.length === 0) {
+    for (const match of text.matchAll(LOOSE_ISSUE_REF)) {
+      const num = parseInt(match[1], 10);
+      if (num > 0 && num < 100000) issueNumbers.push(num);
+    }
+  }
+  return issueNumbers;
+}
+
+const MERGEABLE_MAP: Record<string, PRData['mergeable']> = {
+  clean: 'mergeable', unstable: 'mergeable', dirty: 'conflicting', blocked: 'mergeable',
+};
 
 export class TreliqScanner {
   private config: TreliqConfig;
@@ -31,8 +50,12 @@ export class TreliqScanner {
     console.error(`📡 Fetching open PRs from ${this.config.repo}...`);
 
     // 1. Try loading cache
+    const hash = configHash({
+      trustContributors: this.config.trustContributors,
+      providerName: this.config.provider?.name,
+    });
     const cache = this.config.useCache
-      ? loadCache(this.config.cacheFile, this.config.repo)
+      ? loadCache(this.config.cacheFile, this.config.repo, hash)
       : null;
     if (cache) {
       console.error(`📦 Cache loaded (${Object.keys(cache.prs).length} PRs cached)`);
@@ -69,14 +92,9 @@ export class TreliqScanner {
       if (toFetch.length > 0) {
         console.error(`📊 Scoring ${toFetch.length} changed/new PRs (${fromCache} from cache)...`);
         const freshPRs = await this.fetchPRDetails(toFetch);
-        // Fetch reputation for new authors
+        // Fetch reputation for new authors (parallel)
         const newAuthors = [...new Set(freshPRs.map(p => p.author))];
-        for (const author of newAuthors) {
-          try {
-            const rep = await getReputation(this.octokit, author);
-            this.scoring.setReputation(author, rep.reputationScore);
-          } catch { /* skip */ }
-        }
+        await this.fetchReputations(newAuthors);
         for (const pr of freshPRs) {
           scored.push(await this.scoring.score(pr));
           reScored++;
@@ -89,16 +107,10 @@ export class TreliqScanner {
       prs = await this.fetchPRs();
       console.error(`   Found ${prs.length} open PRs`);
 
-      // Fetch reputation for unique authors
-      const allPRs = prs;
-      const uniqueAuthors = [...new Set(allPRs.map(p => p.author))];
+      // Fetch reputation for unique authors (parallel)
+      const uniqueAuthors = [...new Set(prs.map(p => p.author))];
       console.error(`👤 Fetching reputation for ${uniqueAuthors.length} contributors...`);
-      for (const author of uniqueAuthors) {
-        try {
-          const rep = await getReputation(this.octokit, author);
-          this.scoring.setReputation(author, rep.reputationScore);
-        } catch { /* skip */ }
-      }
+      await this.fetchReputations(uniqueAuthors);
 
       console.error('📊 Scoring PRs...');
       for (const pr of prs) {
@@ -110,7 +122,7 @@ export class TreliqScanner {
     console.error(`   ✅ ${fromCache} PRs from cache, ${reScored} PRs re-scored`);
 
     // 3. Dedup
-    let clusters = [] as import('./types').DedupCluster[];
+    let clusters: DedupCluster[] = [];
     if (this.config.provider) {
       try {
         console.error('🔍 Finding duplicates via embeddings...');
@@ -141,7 +153,8 @@ export class TreliqScanner {
               pr.visionAlignment = result.alignment;
               pr.visionScore = result.score;
               pr.visionReason = result.reason;
-            } catch {
+            } catch (err: any) {
+              console.warn(`⚠️  Vision check failed for PR #${pr.number}: ${err.message}`);
               pr.visionAlignment = 'unchecked';
             }
           }
@@ -157,11 +170,14 @@ export class TreliqScanner {
     scored.sort((a, b) => b.totalScore - a.totalScore);
     const spamCount = scored.filter(p => p.isSpam).length;
 
+    const topLine = scored.length > 0
+      ? `Top PR: #${scored[0].number} (${scored[0].totalScore}/100) — ${scored[0].title}`
+      : 'No PRs found';
     const summary = [
       `Scanned ${scored.length} PRs in ${this.config.repo}`,
       `${spamCount} flagged as spam`,
       `${clusters.length} duplicate clusters found`,
-      `Top PR: #${scored[0]?.number} (${scored[0]?.totalScore}/100) — ${scored[0]?.title}`,
+      topLine,
     ].join('. ');
 
     const result: TreliqResult = {
@@ -178,11 +194,25 @@ export class TreliqScanner {
     if (this.config.useCache) {
       // Merge shaMap from fetchPRList and fetchPRs
       for (const [k, v] of this.shaMap) shaMap.set(k, v);
-      saveCache(this.config.cacheFile, this.config.repo, scored, shaMap);
+      saveCache(this.config.cacheFile, this.config.repo, scored, shaMap, hash);
       console.error(`💾 Cache saved to ${this.config.cacheFile}`);
     }
 
     return result;
+  }
+
+  /** Fetch reputations for a list of authors in parallel */
+  private async fetchReputations(authors: string[]): Promise<void> {
+    const results = await Promise.allSettled(
+      authors.map(author => getReputation(this.octokit, author))
+    );
+    for (const [i, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        this.scoring.setReputation(authors[i], result.value.reputationScore);
+      } else {
+        console.warn(`⚠️  Failed to fetch reputation for ${authors[i]}: ${result.reason}`);
+      }
+    }
   }
 
   async fetchPRs(): Promise<PRData[]> {
@@ -208,44 +238,52 @@ export class TreliqScanner {
         // Track sha for cache
         this.shaMap.set(pr.number, pr.head.sha);
 
-        // Fetch details for files + commits
+        // Fetch details in parallel: detail, files, checks, reviews
+        const [detailRes, filesRes, checksRes, reviewsRes] = await Promise.allSettled([
+          this.octokit.pulls.get({ owner, repo, pull_number: pr.number }),
+          this.octokit.pulls.listFiles({ owner, repo, pull_number: pr.number, per_page: 100 }),
+          this.octokit.checks.listForRef({ owner, repo, ref: pr.head.sha }),
+          this.octokit.pulls.listReviews({ owner, repo, pull_number: pr.number }),
+        ]);
+
+        // Extract detail
         let filesChanged = 0;
         let additions = 0;
         let deletions = 0;
         let commits = 0;
-        let changedFiles: string[] = [];
-        let ciStatus: PRData['ciStatus'] = 'unknown';
-
         let mergeableState = 'unknown';
         let commentCount = 0;
-        try {
-          const detail = await this.octokit.pulls.get({ owner, repo, pull_number: pr.number });
-          filesChanged = detail.data.changed_files;
-          additions = detail.data.additions;
-          deletions = detail.data.deletions;
-          commits = detail.data.commits;
-          mergeableState = detail.data.mergeable_state ?? 'unknown';
-          commentCount = detail.data.comments ?? 0;
-        } catch { /* use defaults */ }
+        if (detailRes.status === 'fulfilled') {
+          const d = detailRes.value.data;
+          filesChanged = d.changed_files;
+          additions = d.additions;
+          deletions = d.deletions;
+          commits = d.commits;
+          mergeableState = d.mergeable_state ?? 'unknown';
+          commentCount = d.comments ?? 0;
+        } else {
+          console.warn(`⚠️  Failed to fetch details for PR #${pr.number}: ${detailRes.reason}`);
+        }
 
-        try {
-          const files = await this.octokit.pulls.listFiles({
-            owner, repo, pull_number: pr.number, per_page: 100,
-          });
-          changedFiles = files.data.map(f => f.filename);
-        } catch { /* skip */ }
+        // Extract files
+        let changedFiles: string[] = [];
+        if (filesRes.status === 'fulfilled') {
+          changedFiles = filesRes.value.data.map(f => f.filename);
+        } else {
+          console.warn(`⚠️  Failed to fetch files for PR #${pr.number}: ${filesRes.reason}`);
+        }
 
-        try {
-          const checks = await this.octokit.checks.listForRef({
-            owner, repo, ref: pr.head.sha,
-          });
-          if (checks.data.total_count > 0) {
-            const conclusions = checks.data.check_runs.map(c => c.conclusion);
+        // Extract CI status
+        let ciStatus: PRData['ciStatus'] = 'unknown';
+        if (checksRes.status === 'fulfilled') {
+          const checksData = checksRes.value.data;
+          if (checksData.total_count > 0) {
+            const conclusions = checksData.check_runs.map(c => c.conclusion);
             if (conclusions.every(c => c === 'success')) ciStatus = 'success';
             else if (conclusions.some(c => c === 'failure')) ciStatus = 'failure';
             else ciStatus = 'pending';
           }
-        } catch {
+        } else {
           // Try commit status as fallback
           try {
             const status = await this.octokit.repos.getCombinedStatusForRef({
@@ -255,20 +293,24 @@ export class TreliqScanner {
               success: 'success', failure: 'failure', pending: 'pending',
             };
             ciStatus = stateMap[status.data.state] ?? 'unknown';
-          } catch { /* unknown */ }
+          } catch (err: any) {
+            console.warn(`⚠️  Failed to fetch CI status for PR #${pr.number}: ${err.message}`);
+          }
         }
 
-        // Reviews
+        // Extract reviews
         let reviewState: PRData['reviewState'] = 'none';
         let reviewCount = 0;
-        try {
-          const { data: reviews } = await this.octokit.pulls.listReviews({ owner, repo, pull_number: pr.number });
+        if (reviewsRes.status === 'fulfilled') {
+          const reviews = reviewsRes.value.data;
           reviewCount = reviews.length;
           const states = reviews.map(r => r.state);
           if (states.includes('APPROVED')) reviewState = 'approved';
           else if (states.includes('CHANGES_REQUESTED')) reviewState = 'changes_requested';
           else if (states.some(s => s === 'COMMENTED')) reviewState = 'commented';
-        } catch { /* skip */ }
+        } else {
+          console.warn(`⚠️  Failed to fetch reviews for PR #${pr.number}: ${reviewsRes.reason}`);
+        }
 
         // Test detection
         const testFilesChanged = changedFiles.filter(f => TEST_PATTERNS.some(p => p.test(f)));
@@ -278,25 +320,11 @@ export class TreliqScanner {
         const ageInDays = Math.floor((Date.now() - new Date(pr.created_at).getTime()) / (1000 * 60 * 60 * 24));
 
         // Mergeable
-        const mergeableMap: Record<string, PRData['mergeable']> = { clean: 'mergeable', unstable: 'mergeable', dirty: 'conflicting', blocked: 'mergeable' };
-        const mergeable: PRData['mergeable'] = mergeableMap[mergeableState] ?? 'unknown';
+        const mergeable: PRData['mergeable'] = MERGEABLE_MAP[mergeableState] ?? 'unknown';
 
-        // Issue references (strong: fixes/closes/resolves, weak: related to, loose: any #123)
+        // Issue references
         const text = `${pr.title} ${pr.body ?? ''}`;
-        const issueNumbers: number[] = [];
-        let match: RegExpExecArray | null;
-        const re = new RegExp(ISSUE_REF_PATTERN.source, 'gi');
-        while ((match = re.exec(text)) !== null) {
-          issueNumbers.push(parseInt(match[1], 10));
-        }
-        // Fallback: any #123 mention (loose ref)
-        if (issueNumbers.length === 0) {
-          const looseRe = new RegExp(LOOSE_ISSUE_REF.source, 'g');
-          while ((match = looseRe.exec(text)) !== null) {
-            const num = parseInt(match[1], 10);
-            if (num > 0 && num < 100000) issueNumbers.push(num);
-          }
-        }
+        const issueNumbers = extractIssueNumbers(text);
 
         prs.push({
           number: pr.number,
@@ -368,7 +396,7 @@ export class TreliqScanner {
   /**
    * Fetch full details for specific PR numbers
    */
-  private async fetchPRDetails(prNumbers: number[]): Promise<PRData[]> {
+  async fetchPRDetails(prNumbers: number[]): Promise<PRData[]> {
     const [owner, repo] = this.config.repo.split('/');
     const prs: PRData[] = [];
 
@@ -387,7 +415,9 @@ export class TreliqScanner {
         try {
           const files = await this.octokit.pulls.listFiles({ owner, repo, pull_number: prNum, per_page: 100 });
           changedFiles = files.data.map(f => f.filename);
-        } catch { /* skip */ }
+        } catch (err: any) {
+          console.warn(`⚠️  Failed to fetch files for PR #${prNum}: ${err.message}`);
+        }
 
         let ciStatus: PRData['ciStatus'] = 'unknown';
         try {
@@ -403,7 +433,9 @@ export class TreliqScanner {
             const status = await this.octokit.repos.getCombinedStatusForRef({ owner, repo, ref: pr.head.sha });
             const stateMap: Record<string, PRData['ciStatus']> = { success: 'success', failure: 'failure', pending: 'pending' };
             ciStatus = stateMap[status.data.state] ?? 'unknown';
-          } catch { /* unknown */ }
+          } catch (err: any) {
+            console.warn(`⚠️  Failed to fetch CI status for PR #${prNum}: ${err.message}`);
+          }
         }
 
         let reviewState: PRData['reviewState'] = 'none';
@@ -415,25 +447,16 @@ export class TreliqScanner {
           if (states.includes('APPROVED')) reviewState = 'approved';
           else if (states.includes('CHANGES_REQUESTED')) reviewState = 'changes_requested';
           else if (states.some(s => s === 'COMMENTED')) reviewState = 'commented';
-        } catch { /* skip */ }
+        } catch (err: any) {
+          console.warn(`⚠️  Failed to fetch reviews for PR #${prNum}: ${err.message}`);
+        }
 
         const testFilesChanged = changedFiles.filter(f => TEST_PATTERNS.some(p => p.test(f)));
         const ageInDays = Math.floor((Date.now() - new Date(pr.created_at).getTime()) / (1000 * 60 * 60 * 24));
-        const mergeableMap: Record<string, PRData['mergeable']> = { clean: 'mergeable', unstable: 'mergeable', dirty: 'conflicting', blocked: 'mergeable' };
-        const mergeable: PRData['mergeable'] = mergeableMap[mergeableState] ?? 'unknown';
+        const mergeable: PRData['mergeable'] = MERGEABLE_MAP[mergeableState] ?? 'unknown';
 
         const text = `${pr.title} ${pr.body ?? ''}`;
-        const issueNumbers: number[] = [];
-        let match: RegExpExecArray | null;
-        const re = new RegExp(ISSUE_REF_PATTERN.source, 'gi');
-        while ((match = re.exec(text)) !== null) issueNumbers.push(parseInt(match[1], 10));
-        if (issueNumbers.length === 0) {
-          const looseRe = new RegExp(LOOSE_ISSUE_REF.source, 'g');
-          while ((match = looseRe.exec(text)) !== null) {
-            const num = parseInt(match[1], 10);
-            if (num > 0 && num < 100000) issueNumbers.push(num);
-          }
-        }
+        const issueNumbers = extractIssueNumbers(text);
 
         prs.push({
           number: pr.number, title: pr.title, body: pr.body ?? '',
@@ -441,7 +464,7 @@ export class TreliqScanner {
           createdAt: pr.created_at, updatedAt: pr.updated_at,
           headRef: pr.head.ref, baseRef: pr.base.ref,
           filesChanged, additions, deletions, commits,
-          labels: pr.labels.map((l: any) => (typeof l === 'string' ? l : l.name ?? '')),
+          labels: pr.labels.map(l => (typeof l === 'string' ? l : l.name ?? '')),
           ciStatus, hasIssueRef: issueNumbers.length > 0, issueNumbers,
           changedFiles, diffUrl: pr.diff_url,
           hasTests: testFilesChanged.length > 0, testFilesChanged,
