@@ -116,6 +116,16 @@ graph TB
 
 ## Quick Start
 
+### Install
+
+```bash
+# Global install
+npm install -g treliq
+
+# Or run directly with npx (no install needed)
+npx treliq@latest --help
+```
+
 ### CLI Mode
 
 ```bash
