@@ -255,11 +255,15 @@ footer a:hover{text-decoration:underline}
     <div class="section-header">
       <h2>Pull Requests</h2>
       <span class="badge" id="prBadge">0</span>
+      <select id="repoFilter" onchange="applyRepoFilter()" style="margin-left:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;display:none">
+        <option value="">All Repos</option>
+      </select>
       <span class="last-scan" id="headerScanTime"></span>
     </div>
     <div class="table-wrap">
     <table id="prTable">
       <thead><tr>
+        <th data-col="repo">Repo <span class="arrow"></span></th>
         <th data-col="number"># <span class="arrow"></span></th>
         <th data-col="totalScore">Score <span class="arrow"></span></th>
         <th data-col="title">Title <span class="arrow"></span></th>
@@ -296,6 +300,7 @@ footer a:hover{text-decoration:underline}
 <script>
 let data=null,sortCol='totalScore',sortAsc=false,inputOpen=true;
 let apiBaseUrl=null,eventSource=null,currentRepo=null;
+let allPRs=[],repoFilterValue='';
 
 // ========== Theme ==========
 function toggleTheme(){
@@ -410,7 +415,7 @@ async function loadRepoPRs(){
       totalPRs:result.total||result.prs?.length||0,
       spamCount:(result.prs||[]).filter(p=>p.is_spam).length,
       duplicateClusters:[],
-      rankedPRs:(result.prs||[]).map(mapAPIPR),
+      rankedPRs:(result.prs||[]).map(p=>mapAPIPR(p,repoFull)),
     };
     render();
     collapseInput();
@@ -420,8 +425,9 @@ async function loadRepoPRs(){
   }
 }
 
-function mapAPIPR(p){
+function mapAPIPR(p,repoName){
   return{
+    _repo:repoName||'',
     number:p.pr_number||p.number,
     title:p.title||'',
     author:p.author||'',
@@ -527,6 +533,31 @@ function connectSSE(url){
   };
 }
 
+// ========== Repo Filter ==========
+function applyRepoFilter(){
+  repoFilterValue=document.getElementById('repoFilter').value;
+  render();
+}
+
+function updateRepoFilter(prs){
+  const repos=[...new Set(prs.map(p=>p._repo||data?.repo||''))].filter(Boolean);
+  const select=document.getElementById('repoFilter');
+  if(repos.length>1){
+    select.style.display='';
+    const current=select.value;
+    select.innerHTML='<option value="">All Repos ('+prs.length+')</option>';
+    repos.forEach(r=>{
+      const count=prs.filter(p=>(p._repo||data?.repo||'')===r).length;
+      const opt=document.createElement('option');
+      opt.value=r;opt.textContent=r+' ('+count+')';
+      select.appendChild(opt);
+    });
+    select.value=current;
+  }else{
+    select.style.display='none';
+  }
+}
+
 // ========== Helpers ==========
 function getLLMRisk(score){
   if(score==null) return {level:'N/A',cls:''};
@@ -539,11 +570,16 @@ function getLLMRisk(score){
 function render(){
   if(!data)return;
   document.getElementById('sections').style.display='block';
-  const prs=data.rankedPRs||[];
-  document.getElementById('totalPRs').textContent=data.totalPRs||prs.length||0;
-  document.getElementById('spamCount').textContent=data.spamCount||0;
-  document.getElementById('dupCount').textContent=data.duplicateClusters?.length||0;
+  const rawPRs=data.rankedPRs||[];
+  // Ensure each PR has _repo field
+  rawPRs.forEach(p=>{if(!p._repo) p._repo=data.repo||'';});
+  allPRs=rawPRs;
+  updateRepoFilter(rawPRs);
+  const prs=repoFilterValue?rawPRs.filter(p=>(p._repo||data.repo||'')===repoFilterValue):rawPRs;
+  document.getElementById('totalPRs').textContent=prs.length;
+  document.getElementById('spamCount').textContent=prs.filter(p=>p.isSpam).length;
   document.getElementById('prBadge').textContent=prs.length;
+  document.getElementById('dupCount').textContent=data.duplicateClusters?.length||0;
   document.getElementById('clusterBadge').textContent=data.duplicateClusters?.length||0;
   const avg=prs.length?Math.round(prs.reduce((s,p)=>s+p.totalScore,0)/prs.length):0;
   document.getElementById('avgScore').textContent=avg;
@@ -566,13 +602,16 @@ function render(){
     return sortAsc?(va>vb?1:-1):(va<vb?1:-1);
   });
 
-  const repo=data.repo||'';
+  const defaultRepo=data.repo||'';
   const tbody=document.getElementById('prBody');
   tbody.innerHTML=sorted.map(pr=>{
+    const repo=pr._repo||defaultRepo;
+    const repoShort=repo.split('/').pop()||repo;
     const c=pr.totalScore>=70?'var(--green)':pr.totalScore>=40?'var(--yellow)':'var(--red)';
     const risk=getLLMRisk(pr.llmScore);
     const reviewerCount=typeof pr.requestedReviewers==='number'?pr.requestedReviewers:(Array.isArray(pr.requestedReviewers)?pr.requestedReviewers.length:0);
     return `<tr>
+      <td style="color:var(--muted);font-size:11px" title="${repo}">${repoShort}</td>
       <td><a class="pr-link" href="https://github.com/${repo}/pull/${pr.number}" target="_blank">#${pr.number}</a></td>
       <td><span class="score-pill"><span class="bar" style="background:${c};width:${Math.max(pr.totalScore*.5,4)}px"></span><span class="num">${pr.totalScore}</span></span></td>
       <td title="${(pr.title||'').replace(/"/g,'&quot;')}" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">${(pr.title||'').slice(0,65)}</td>

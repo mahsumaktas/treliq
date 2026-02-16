@@ -557,6 +557,38 @@ export class TreliqDB {
     };
   }
 
+  // ========== Data Management ==========
+
+  /**
+   * Clear all PR data, scoring signals, and scan history for a repository
+   * Repository entry itself is preserved
+   */
+  clearRepository(repoId: number): { deletedPRs: number; deletedScans: number } {
+    const clear = this.db.transaction((repoId: number) => {
+      // Delete scoring signals for all PRs in this repo
+      this.db.prepare(`
+        DELETE FROM scoring_signals
+        WHERE pr_id IN (SELECT id FROM pull_requests WHERE repo_id = ?)
+      `).run(repoId);
+
+      // Delete pull requests
+      const prResult = this.db.prepare('DELETE FROM pull_requests WHERE repo_id = ?').run(repoId);
+
+      // Delete scan history
+      const scanResult = this.db.prepare('DELETE FROM scan_history WHERE repo_id = ?').run(repoId);
+
+      // Reset last_scan timestamp
+      this.db.prepare('UPDATE repositories SET last_scan = NULL WHERE id = ?').run(repoId);
+
+      return {
+        deletedPRs: prResult.changes,
+        deletedScans: scanResult.changes,
+      };
+    });
+
+    return clear(repoId);
+  }
+
   // ========== Lifecycle ==========
 
   /**

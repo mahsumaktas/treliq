@@ -75,10 +75,12 @@ export const PR_DETAILS_QUERY = `
           changedFiles
           milestone { title }
           labels(first: 50) { nodes { name } }
-          requestedReviewers(first: 20) {
+          reviewRequests(first: 20) {
             nodes {
-              ... on User { login }
-              ... on Team { name }
+              requestedReviewer {
+                ... on User { login }
+                ... on Team { name }
+              }
             }
           }
           reviews(last: 50) {
@@ -201,9 +203,9 @@ export function mapGraphQLToPRData(node: any, owner: string, repo: string): { pr
   // Labels
   const labels: string[] = (node.labels?.nodes ?? []).map((l: any) => l.name);
 
-  // Requested reviewers
-  const requestedReviewers: string[] = (node.requestedReviewers?.nodes ?? [])
-    .map((r: any) => r.login ?? r.name ?? '')
+  // Requested reviewers (GraphQL field: reviewRequests → requestedReviewer)
+  const requestedReviewers: string[] = (node.reviewRequests?.nodes ?? [])
+    .map((r: any) => r.requestedReviewer?.login ?? r.requestedReviewer?.name ?? '')
     .filter(Boolean);
 
   // Test detection

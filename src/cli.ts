@@ -466,6 +466,51 @@ program
   });
 
 program
+  .command('reset')
+  .description('Clear all PR data and scan history for a repository')
+  .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
+  .option('--db-path <path>', 'SQLite database path', './treliq.db')
+  .action(async (opts: CLIOpts) => {
+    validateRepo(opts.repo);
+    const dbPath = opts.dbPath ?? './treliq.db';
+    const [owner, repo] = opts.repo.split('/');
+
+    const { TreliqDB } = await import('./core/db');
+    const db = new TreliqDB(dbPath);
+
+    const repoId = db.upsertRepository(owner, repo);
+    const stats = db.getRepositoryStats(repoId);
+
+    if (stats.totalPRs === 0) {
+      console.log(`ℹ️  No data found for ${opts.repo}. Nothing to clear.`);
+      db.close();
+      return;
+    }
+
+    console.log(`\n⚠️  About to clear data for ${opts.repo}:`);
+    console.log(`   ${stats.totalPRs} PRs, ${stats.spamPRs} spam, ${stats.duplicateGroups} duplicate groups`);
+
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise<string>(resolve => {
+      rl.question('\n   Delete all data? (yes/no): ', resolve);
+    });
+    rl.close();
+
+    if (answer.toLowerCase() !== 'yes') {
+      console.log('❌ Operation cancelled.');
+      db.close();
+      return;
+    }
+
+    const result = db.clearRepository(repoId);
+    db.optimize();
+    db.close();
+
+    console.log(`\n✅ Cleared: ${result.deletedPRs} PRs, ${result.deletedScans} scan records removed.`);
+    console.log(`   Database optimized. Ready for fresh scan.`);
+  });
+
+program
   .command('server')
   .description('Start Treliq server with web UI and scheduled scanning')
   .option('--port <number>', 'Server port', '3000')
