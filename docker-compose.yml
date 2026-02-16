@@ -1,0 +1,20 @@
+services:
+  treliq:
+    build: .
+    ports:
+      - "4747:4747"
+    environment:
+      # PAT mode:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      # App mode (uncomment, comment out GITHUB_TOKEN):
+      # - GITHUB_APP_ID=${GITHUB_APP_ID}
+      # - GITHUB_PRIVATE_KEY_PATH=/app/private-key.pem
+      # - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      # LLM Provider:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - treliq-data:/data
+    restart: unless-stopped
+
+volumes:
+  treliq-data:

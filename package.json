@@ -64,6 +64,7 @@
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",
     "@lancedb/lancedb": "^0.15.0",
+    "@octokit/auth-app": "^8.2.0",
     "@octokit/graphql": "^9.0.3",
     "@octokit/rest": "^21.0.0",
     "@octokit/webhooks": "^14.2.0",

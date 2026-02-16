@@ -14,6 +14,7 @@ import { TreliqScanner } from '../core/scanner';
 import type { TreliqConfig } from '../core/types';
 import { registerWebhooks } from './webhooks';
 import { SSEBroadcaster } from './sse';
+import { getAuthMode, getAppConfig } from '../core/app-config';
 
 export interface ServerConfig {
   port: number;
@@ -302,28 +303,246 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
     return reply;
   });
 
-  // ========== GitHub App Setup Page ==========
+  // ========== GitHub App Setup Flow ==========
 
   /**
-   * GET /setup - GitHub App installation guide
+   * GET /setup - GitHub App setup page with manifest-based creation
    */
   fastify.get('/setup', async (request: FastifyRequest, reply: FastifyReply) => {
+    const proto = request.headers['x-forwarded-proto'] || request.protocol;
+    const host = request.headers['x-forwarded-host'] || request.hostname;
+    const baseUrl = `${proto}://${host}`;
+    const authMode = getAuthMode();
+
+    const manifest = JSON.stringify({
+      name: 'Treliq PR Triage',
+      description: 'AI-powered PR triage, scoring, and duplicate detection',
+      url: 'https://github.com/mahsumaktas/treliq',
+      hook_attributes: { url: `${baseUrl}/webhooks`, active: true },
+      redirect_url: `${baseUrl}/setup/callback`,
+      public: true,
+      default_events: ['pull_request', 'installation', 'installation_repositories'],
+      default_permissions: {
+        pull_requests: 'write',
+        contents: 'read',
+        checks: 'read',
+        issues: 'write',
+      },
+    });
+
     reply.type('text/html').send(`<!DOCTYPE html>
 <html><head><title>Treliq Setup</title>
-<style>body{font-family:system-ui;max-width:640px;margin:40px auto;padding:20px;background:#0d1117;color:#e6edf3}
-a{color:#58a6ff}code{background:#161b22;padding:2px 6px;border-radius:4px}
-.step{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:12px 0}
-h1{color:#2da44e}</style></head>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0a0f;color:#e6edf3;min-height:100vh;display:flex;justify-content:center;padding:40px 20px}
+.container{max-width:600px;width:100%}
+h1{font-size:28px;margin-bottom:8px;color:#fff}
+.subtitle{color:#8b949e;margin-bottom:32px;font-size:15px}
+.status{background:#12131a;border:1px solid #2a2b36;border-radius:12px;padding:20px;margin-bottom:24px}
+.status-label{font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:#8b949e;margin-bottom:8px}
+.status-value{font-size:16px;font-weight:600}
+.status-value.app{color:#2da44e}
+.status-value.pat{color:#d29922}
+.steps{display:flex;flex-direction:column;gap:16px;margin-bottom:32px}
+.step{background:#12131a;border:1px solid #2a2b36;border-radius:12px;padding:20px}
+.step-num{display:inline-block;width:28px;height:28px;background:#1a1b26;border-radius:50%;text-align:center;line-height:28px;font-size:13px;font-weight:600;color:#58a6ff;margin-bottom:12px}
+.step h3{font-size:15px;margin-bottom:6px;color:#fff}
+.step p{color:#8b949e;font-size:14px;line-height:1.5}
+code{background:#1a1b26;padding:2px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:13px;color:#58a6ff}
+.btn{display:inline-block;background:#238636;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;border:none;cursor:pointer;transition:background 0.15s}
+.btn:hover{background:#2ea043}
+.btn-secondary{background:#21262d;border:1px solid #30363d}
+.btn-secondary:hover{background:#30363d}
+form{display:inline}
+.back{margin-top:24px;display:block;color:#58a6ff;text-decoration:none;font-size:14px}
+</style></head>
 <body>
-<h1>Treliq Setup</h1>
-<p>Install Treliq as a GitHub App for automatic PR triage.</p>
-<div class="step"><strong>Step 1:</strong> Create a GitHub App using the <a href="https://github.com/settings/apps/new">GitHub Developer Settings</a></div>
-<div class="step"><strong>Step 2:</strong> Set webhook URL to: <code>${request.protocol}://${request.hostname}/webhooks</code></div>
-<div class="step"><strong>Step 3:</strong> Enable <code>pull_request</code> events with <code>read/write</code> permissions</div>
-<div class="step"><strong>Step 4:</strong> Install the App on your repositories</div>
-<div class="step"><strong>Step 5:</strong> Start the server with <code>--webhook-secret YOUR_SECRET</code></div>
-<p style="margin-top:24px"><a href="/">← Back to Dashboard</a></p>
+<div class="container">
+  <h1>Treliq Setup</h1>
+  <p class="subtitle">Configure Treliq as a GitHub App for automatic PR triage</p>
+
+  <div class="status">
+    <div class="status-label">Current Mode</div>
+    <div class="status-value ${authMode}">${authMode === 'app' ? '● GitHub App Mode' : '● Personal Access Token Mode'}</div>
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <h3>Create GitHub App</h3>
+      <p>Click below to create a GitHub App with pre-configured permissions and webhook settings.</p>
+      <br>
+      <form action="https://github.com/settings/apps/new" method="post">
+        <input type="hidden" name="manifest" value='${manifest.replace(/'/g, "&#39;")}'>
+        <button type="submit" class="btn">Create GitHub App</button>
+      </form>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <h3>Save Credentials</h3>
+      <p>After creation, you'll receive App ID and Private Key. Add them to your environment:</p>
+      <br>
+      <code>GITHUB_APP_ID=your_app_id</code><br><br>
+      <code>GITHUB_PRIVATE_KEY_PATH=./private-key.pem</code><br><br>
+      <code>GITHUB_WEBHOOK_SECRET=your_secret</code>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <h3>Restart Server</h3>
+      <p>Restart Treliq server to activate GitHub App mode. The server auto-detects the mode from environment variables.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">4</div>
+      <h3>Install on Repositories</h3>
+      <p>Go to your GitHub App settings and install it on the repositories you want to triage.</p>
+    </div>
+  </div>
+
+  <div>
+    <a href="/" class="btn btn-secondary">← Back to Dashboard</a>
+    &nbsp;&nbsp;
+    <a href="https://github.com/mahsumaktas/treliq/blob/main/docs/DEPLOYMENT.md" class="btn btn-secondary" target="_blank">Deployment Guide</a>
+  </div>
+</div>
 </body></html>`);
+  });
+
+  /**
+   * GET /setup/callback - Handle GitHub App manifest creation callback
+   */
+  fastify.get<{ Querystring: { code?: string } }>(
+    '/setup/callback',
+    async (request, reply) => {
+      const { code } = request.query;
+
+      if (!code) {
+        return reply.code(400).type('text/html').send(`<!DOCTYPE html>
+<html><head><title>Treliq Setup - Error</title>
+<style>body{font-family:system-ui;background:#0a0a0f;color:#e6edf3;display:flex;justify-content:center;padding:40px}
+.container{max-width:600px}.error{background:#3d1a1a;border:1px solid #f85149;border-radius:12px;padding:20px;margin:20px 0}
+a{color:#58a6ff}</style></head>
+<body><div class="container">
+<h1>Setup Error</h1>
+<div class="error">Missing authorization code. Please try the setup process again.</div>
+<a href="/setup">← Back to Setup</a>
+</div></body></html>`);
+      }
+
+      try {
+        // Exchange code for app credentials
+        const response = await fetch(
+          `https://api.github.com/app-manifests/${code}/conversions`,
+          {
+            method: 'POST',
+            headers: {
+              Accept: 'application/vnd.github+json',
+            },
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`GitHub API returned ${response.status}: ${response.statusText}`);
+        }
+
+        const appData = await response.json() as {
+          id: number;
+          slug: string;
+          name: string;
+          client_id: string;
+          client_secret: string;
+          webhook_secret: string;
+          pem: string;
+          html_url: string;
+        };
+
+        reply.type('text/html').send(`<!DOCTYPE html>
+<html><head><title>Treliq Setup - Complete</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui;background:#0a0a0f;color:#e6edf3;display:flex;justify-content:center;padding:40px 20px}
+.container{max-width:700px;width:100%}
+h1{color:#2da44e;margin-bottom:8px}
+.subtitle{color:#8b949e;margin-bottom:24px}
+.success{background:#1a3d1a;border:1px solid #2da44e;border-radius:12px;padding:20px;margin-bottom:24px}
+.env-block{background:#12131a;border:1px solid #2a2b36;border-radius:12px;padding:20px;margin-bottom:24px;position:relative}
+.env-block h3{margin-bottom:12px;font-size:15px;color:#fff}
+pre{background:#0a0a0f;padding:16px;border-radius:8px;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.8;color:#e6edf3}
+.copy-btn{position:absolute;top:16px;right:16px;background:#21262d;border:1px solid #30363d;color:#e6edf3;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px}
+.copy-btn:hover{background:#30363d}
+.warning{background:#3d2f1a;border:1px solid #d29922;border-radius:12px;padding:16px;margin-bottom:24px;font-size:14px;color:#d29922}
+a{color:#58a6ff;text-decoration:none}
+.btn{display:inline-block;background:#238636;color:#fff;padding:10px 20px;border-radius:8px;font-weight:600;font-size:14px;margin-top:8px}
+</style></head>
+<body>
+<div class="container">
+  <h1>GitHub App Created!</h1>
+  <p class="subtitle"><strong>${appData.name}</strong> (ID: ${appData.id})</p>
+
+  <div class="success">App created successfully. Save the credentials below and add them to your environment.</div>
+
+  <div class="warning">
+    ⚠️ Save the private key NOW — it won't be shown again.
+  </div>
+
+  <div class="env-block">
+    <h3>.env Configuration</h3>
+    <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('env').textContent)">Copy</button>
+    <pre id="env">GITHUB_APP_ID=${appData.id}
+GITHUB_WEBHOOK_SECRET=${appData.webhook_secret}
+GITHUB_CLIENT_ID=${appData.client_id}
+GITHUB_CLIENT_SECRET=${appData.client_secret}
+
+# Save the private key below to a file:
+# GITHUB_PRIVATE_KEY_PATH=./private-key.pem</pre>
+  </div>
+
+  <div class="env-block">
+    <h3>Private Key (save as private-key.pem)</h3>
+    <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('pem').textContent)">Copy</button>
+    <pre id="pem">${appData.pem}</pre>
+  </div>
+
+  <p>Next steps:</p>
+  <ol style="padding-left:20px;margin:12px 0;line-height:2;color:#8b949e">
+    <li>Save the .env values and private key</li>
+    <li>Restart the server with the new environment variables</li>
+    <li><a href="${appData.html_url}/installations/new" target="_blank">Install the app</a> on your repositories</li>
+  </ol>
+
+  <a href="${appData.html_url}/installations/new" class="btn" target="_blank">Install on Repositories →</a>
+</div>
+</body></html>`);
+
+      } catch (error: any) {
+        console.error('❌ GitHub App creation failed:', error);
+        reply.code(500).type('text/html').send(`<!DOCTYPE html>
+<html><head><title>Treliq Setup - Error</title>
+<style>body{font-family:system-ui;background:#0a0a0f;color:#e6edf3;display:flex;justify-content:center;padding:40px}
+.container{max-width:600px}.error{background:#3d1a1a;border:1px solid #f85149;border-radius:12px;padding:20px;margin:20px 0}
+a{color:#58a6ff}code{background:#1a1b26;padding:2px 6px;border-radius:4px;font-size:13px}</style></head>
+<body><div class="container">
+<h1>Setup Error</h1>
+<div class="error">${error.message}</div>
+<p>Please try the setup process again.</p>
+<br><a href="/setup">← Back to Setup</a>
+</div></body></html>`);
+      }
+    }
+  );
+
+  /**
+   * GET /api/installations - List all GitHub App installations
+   */
+  fastify.get('/api/installations', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const installations = db.getInstallations();
+      return { installations, authMode: getAuthMode() };
+    } catch (error: any) {
+      return reply.code(500).send({ error: 'Failed to list installations', message: error.message });
+    }
   });
 
   // ========== Webhook Registration ==========

@@ -8,6 +8,7 @@ import { ScoringEngine } from './core/scoring';
 import { DedupEngine } from './core/dedup';
 import type { TreliqConfig, TreliqResult, ScoredPR } from './core/types';
 import { createProvider, type LLMProvider, type ProviderName } from './core/provider';
+import { getAuthMode, getAppConfig } from './core/app-config';
 
 const program = new Command();
 
@@ -37,6 +38,8 @@ interface CLIOpts {
   webhookSecret?: string;
   slackWebhook?: string;
   discordWebhook?: string;
+  appId?: string;
+  privateKeyPath?: string;
 }
 
 function resolveProvider(opts: CLIOpts): LLMProvider | undefined {
@@ -524,11 +527,35 @@ program
   .option('--webhook-secret <secret>', 'GitHub webhook secret')
   .option('--slack-webhook <url>', 'Slack webhook URL')
   .option('--discord-webhook <url>', 'Discord webhook URL')
+  .option('--app-id <number>', 'GitHub App ID (enables App mode)')
+  .option('--private-key-path <path>', 'Path to GitHub App private key PEM file')
   .action(async (opts: CLIOpts) => {
-    const token = opts.token || process.env.GITHUB_TOKEN;
-    if (!token) {
-      console.error('❌ GITHUB_TOKEN required for server mode.');
+    // Set App mode env vars from CLI flags (if provided)
+    if (opts.appId) process.env.GITHUB_APP_ID = opts.appId;
+    if (opts.privateKeyPath) process.env.GITHUB_PRIVATE_KEY_PATH = opts.privateKeyPath;
+
+    const authMode = getAuthMode();
+    let token = opts.token || process.env.GITHUB_TOKEN || '';
+
+    if (authMode === 'pat' && !token) {
+      console.error('❌ GITHUB_TOKEN required (or use --app-id for GitHub App mode).');
       process.exit(1);
+    }
+
+    if (authMode === 'app') {
+      try {
+        const appConfig = getAppConfig();
+        console.error(`🔐 GitHub App mode (App ID: ${appConfig!.appId})`);
+        // In App mode, webhook secret comes from app config if not provided via CLI
+        if (!opts.webhookSecret && appConfig!.webhookSecret) {
+          opts.webhookSecret = appConfig!.webhookSecret;
+        }
+      } catch (err: any) {
+        console.error(`❌ GitHub App config error: ${err.message}`);
+        process.exit(1);
+      }
+    } else {
+      console.error('🔑 PAT mode');
     }
 
     const port = parseInt(opts.port ?? '3000', 10);

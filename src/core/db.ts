@@ -138,6 +138,28 @@ export class TreliqDB {
       );
     `);
 
+    // GitHub App installations
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS installations (
+        id INTEGER PRIMARY KEY,
+        account_type TEXT NOT NULL,
+        account_login TEXT NOT NULL,
+        installed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        suspended_at TEXT
+      );
+    `);
+
+    // Repositories accessible by each installation
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS installation_repos (
+        installation_id INTEGER NOT NULL,
+        repo_id INTEGER NOT NULL,
+        FOREIGN KEY (installation_id) REFERENCES installations(id) ON DELETE CASCADE,
+        FOREIGN KEY (repo_id) REFERENCES repositories(id) ON DELETE CASCADE,
+        PRIMARY KEY (installation_id, repo_id)
+      );
+    `);
+
     // Create indexes for performance
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_prs_repo_number ON pull_requests(repo_id, pr_number);
@@ -147,6 +169,7 @@ export class TreliqDB {
       CREATE INDEX IF NOT EXISTS idx_prs_duplicate_group ON pull_requests(duplicate_group);
       CREATE INDEX IF NOT EXISTS idx_signals_pr ON scoring_signals(pr_id);
       CREATE INDEX IF NOT EXISTS idx_scan_history_repo ON scan_history(repo_id, scanned_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_installation_repos ON installation_repos(installation_id, repo_id);
     `);
   }
 
@@ -555,6 +578,92 @@ export class TreliqDB {
       duplicateGroups: number;
       avgScore: number;
     };
+  }
+
+  // ========== Installation Operations ==========
+
+  /**
+   * Insert or update a GitHub App installation
+   */
+  upsertInstallation(id: number, accountType: string, accountLogin: string): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO installations (id, account_type, account_login)
+      VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        account_type = excluded.account_type,
+        account_login = excluded.account_login,
+        suspended_at = NULL
+    `);
+    stmt.run(id, accountType, accountLogin);
+  }
+
+  /**
+   * Delete a GitHub App installation and its repo links
+   */
+  deleteInstallation(installationId: number): void {
+    // installation_repos will cascade delete
+    const stmt = this.db.prepare('DELETE FROM installations WHERE id = ?');
+    stmt.run(installationId);
+  }
+
+  /**
+   * Suspend/unsuspend an installation
+   */
+  suspendInstallation(installationId: number, suspended: boolean): void {
+    const stmt = this.db.prepare(`
+      UPDATE installations SET suspended_at = ? WHERE id = ?
+    `);
+    stmt.run(suspended ? new Date().toISOString() : null, installationId);
+  }
+
+  /**
+   * Link a repository to an installation
+   */
+  linkInstallationRepo(installationId: number, repoId: number): void {
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO installation_repos (installation_id, repo_id)
+      VALUES (?, ?)
+    `);
+    stmt.run(installationId, repoId);
+  }
+
+  /**
+   * Unlink a repository from an installation
+   */
+  unlinkInstallationRepo(installationId: number, repoId: number): void {
+    const stmt = this.db.prepare(`
+      DELETE FROM installation_repos
+      WHERE installation_id = ? AND repo_id = ?
+    `);
+    stmt.run(installationId, repoId);
+  }
+
+  /**
+   * Get the installation ID for a specific repository
+   */
+  getRepoInstallation(owner: string, repo: string): number | null {
+    const stmt = this.db.prepare(`
+      SELECT ir.installation_id
+      FROM installation_repos ir
+      JOIN repositories r ON r.id = ir.repo_id
+      WHERE r.owner = ? AND r.repo = ?
+      LIMIT 1
+    `);
+    const result = stmt.get(owner, repo) as { installation_id: number } | undefined;
+    return result?.installation_id ?? null;
+  }
+
+  /**
+   * Get all installations
+   */
+  getInstallations(): Array<{ id: number; accountType: string; accountLogin: string; installedAt: string; suspendedAt: string | null }> {
+    const stmt = this.db.prepare(`
+      SELECT id, account_type as accountType, account_login as accountLogin,
+             installed_at as installedAt, suspended_at as suspendedAt
+      FROM installations
+      ORDER BY installed_at DESC
+    `);
+    return stmt.all() as Array<{ id: number; accountType: string; accountLogin: string; installedAt: string; suspendedAt: string | null }>;
   }
 
   // ========== Data Management ==========

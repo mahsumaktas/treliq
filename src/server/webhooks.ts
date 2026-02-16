@@ -13,6 +13,8 @@ import { TreliqScanner } from '../core/scanner';
 import { TreliqDB } from '../core/db';
 import type { TreliqConfig } from '../core/types';
 import type { SSEBroadcaster } from './sse';
+import { getAuthMode, getAppConfig } from '../core/app-config';
+import { createAppOctokit, clearTokenCache } from '../core/auth';
 
 export interface WebhookConfig {
   secret: string;
@@ -41,6 +43,25 @@ interface WebhookPayload {
     name: string;
     full_name: string;
   };
+  installation?: {
+    id: number;
+    account: {
+      login: string;
+      type: string;
+    };
+  };
+  repositories?: Array<{
+    id: number;
+    full_name: string;
+  }>;
+  repositories_added?: Array<{
+    id: number;
+    full_name: string;
+  }>;
+  repositories_removed?: Array<{
+    id: number;
+    full_name: string;
+  }>;
 }
 
 /**
@@ -106,6 +127,12 @@ export function registerWebhooks(
         if (event === 'pull_request') {
           await handlePullRequestEvent(payload, config);
           return reply.code(200).send({ status: 'processed' });
+        } else if (event === 'installation') {
+          await handleInstallationEvent(payload, config);
+          return reply.code(200).send({ status: 'processed' });
+        } else if (event === 'installation_repositories') {
+          await handleInstallationReposEvent(payload, config);
+          return reply.code(200).send({ status: 'processed' });
         } else if (event === 'ping') {
           console.error('🏓 Webhook ping received');
           return reply.code(200).send({ status: 'pong' });
@@ -124,6 +151,7 @@ export function registerWebhooks(
   );
 
   console.error('✅ Webhook endpoint registered at POST /webhooks');
+  console.error('   Events: pull_request, installation, installation_repositories, ping');
 }
 
 /**
@@ -189,6 +217,113 @@ async function handlePullRequestEvent(
   } catch (error: any) {
     console.error(`❌ Failed to process PR ${repoFullName}#${prNumber}:`, error.message);
     throw error;
+  }
+}
+
+/**
+ * Handle installation lifecycle events (created, deleted, suspend, unsuspend)
+ */
+async function handleInstallationEvent(
+  payload: WebhookPayload,
+  config: WebhookConfig
+): Promise<void> {
+  const { action, installation, repositories } = payload;
+
+  if (!installation) {
+    console.error('⚠️  Missing installation in payload');
+    return;
+  }
+
+  const { id, account } = installation;
+
+  switch (action) {
+    case 'created':
+      console.error(`📦 New installation: ${account.login} (${account.type}) [${id}]`);
+      config.db.upsertInstallation(id, account.type, account.login);
+
+      // Link accessible repositories
+      if (repositories) {
+        for (const repo of repositories) {
+          const [owner, name] = repo.full_name.split('/');
+          const repoId = config.db.upsertRepository(owner, name);
+          config.db.linkInstallationRepo(id, repoId);
+        }
+        console.error(`   Linked ${repositories.length} repositories`);
+      }
+
+      config.broadcaster?.broadcast('installation_created', {
+        installationId: id,
+        account: account.login,
+        accountType: account.type,
+        repoCount: repositories?.length ?? 0,
+        timestamp: new Date().toISOString(),
+      });
+      break;
+
+    case 'deleted':
+      console.error(`🗑️  Installation removed: ${account.login} [${id}]`);
+      clearTokenCache(id);
+      config.db.deleteInstallation(id);
+
+      config.broadcaster?.broadcast('installation_deleted', {
+        installationId: id,
+        account: account.login,
+        timestamp: new Date().toISOString(),
+      });
+      break;
+
+    case 'suspend':
+      console.error(`⏸️  Installation suspended: ${account.login} [${id}]`);
+      config.db.suspendInstallation(id, true);
+      clearTokenCache(id);
+      break;
+
+    case 'unsuspend':
+      console.error(`▶️  Installation unsuspended: ${account.login} [${id}]`);
+      config.db.suspendInstallation(id, false);
+      break;
+
+    default:
+      console.error(`⏭️  Ignoring installation action: ${action}`);
+  }
+}
+
+/**
+ * Handle installation_repositories events (repos added/removed from installation)
+ */
+async function handleInstallationReposEvent(
+  payload: WebhookPayload,
+  config: WebhookConfig
+): Promise<void> {
+  const { action, installation, repositories_added, repositories_removed } = payload;
+
+  if (!installation) {
+    console.error('⚠️  Missing installation in payload');
+    return;
+  }
+
+  const installationId = installation.id;
+
+  if (action === 'added' && repositories_added) {
+    for (const repo of repositories_added) {
+      const [owner, name] = repo.full_name.split('/');
+      const repoId = config.db.upsertRepository(owner, name);
+      config.db.linkInstallationRepo(installationId, repoId);
+    }
+    console.error(`📦 Added ${repositories_added.length} repos to installation ${installationId}`);
+  }
+
+  if (action === 'removed' && repositories_removed) {
+    for (const repo of repositories_removed) {
+      const [owner, name] = repo.full_name.split('/');
+      // Find repo ID and unlink
+      const repos = config.db.getRepositories();
+      const found = repos.find(r => r.owner === owner && r.repo === name);
+      if (found) {
+        config.db.unlinkInstallationRepo(installationId, found.id);
+      }
+    }
+    console.error(`📦 Removed ${repositories_removed.length} repos from installation ${installationId}`);
   }
 }
 

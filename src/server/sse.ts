@@ -7,7 +7,7 @@
 
 import type { FastifyReply } from 'fastify';
 
-export type SSEEvent = 'scan_start' | 'scan_complete' | 'pr_scored' | 'pr_closed';
+export type SSEEvent = 'scan_start' | 'scan_complete' | 'pr_scored' | 'pr_closed' | 'installation_created' | 'installation_deleted';
 
 export class SSEBroadcaster {
   private clients = new Set<FastifyReply>();

@@ -9,7 +9,9 @@
   "redirect_url": "https://YOUR_SERVER_URL/setup",
   "public": true,
   "default_events": [
-    "pull_request"
+    "pull_request",
+    "installation",
+    "installation_repositories"
   ],
   "default_permissions": {
     "pull_requests": "write",
