@@ -19,6 +19,9 @@ import { createServer } from './app';
 import { startScheduler } from './scheduler';
 import { NotificationDispatcher } from '../core/notifications';
 import { TreliqDB } from '../core/db';
+import { createLogger } from '../core/logger';
+
+const log = createLogger('server');
 
 export interface StartServerConfig extends ServerConfig {
   scheduledRepos?: string[];
@@ -35,7 +38,7 @@ export interface StartServerConfig extends ServerConfig {
  * - Notifications (if webhook URLs provided)
  */
 export async function startServer(config: StartServerConfig): Promise<void> {
-  console.error('🚀 Starting Treliq Server...\n');
+  log.info('Starting Treliq Server');
 
   // Initialize notifications if configured
   let notifications: NotificationDispatcher | undefined;
@@ -44,9 +47,9 @@ export async function startServer(config: StartServerConfig): Promise<void> {
       slackWebhook: config.slackWebhook,
       discordWebhook: config.discordWebhook,
     });
-    console.error('📢 Notifications enabled');
-    if (config.slackWebhook) console.error('   - Slack webhook configured');
-    if (config.discordWebhook) console.error('   - Discord webhook configured');
+    log.info('Notifications enabled');
+    if (config.slackWebhook) log.info('Slack webhook configured');
+    if (config.discordWebhook) log.info('Discord webhook configured');
   }
 
   // Create and start Fastify server
@@ -58,14 +61,14 @@ export async function startServer(config: StartServerConfig): Promise<void> {
       host: config.host,
     });
 
-    console.error(`\n✅ Server listening on http://${config.host}:${config.port}`);
-    console.error(`   Health check: http://${config.host}:${config.port}/health`);
+    log.info({ host: config.host, port: config.port }, 'Server listening');
+    log.info({ url: `http://${config.host}:${config.port}/health` }, 'Health check available');
 
     if (config.webhookSecret) {
-      console.error(`   Webhook endpoint: http://${config.host}:${config.port}/webhooks`);
+      log.info({ url: `http://${config.host}:${config.port}/webhooks` }, 'Webhook endpoint registered');
     }
   } catch (error: any) {
-    console.error('❌ Failed to start server:', error);
+    log.error({ err: error }, 'Failed to start server');
     throw error;
   }
 
@@ -73,7 +76,7 @@ export async function startServer(config: StartServerConfig): Promise<void> {
   let schedulerHandle: SchedulerHandle | undefined;
   if (config.scheduledRepos && config.scheduledRepos.length > 0) {
     if (!config.cronExpression) {
-      console.error('⚠️  scheduledRepos provided but no cronExpression - scheduler not started');
+      log.warn('scheduledRepos provided but no cronExpression');
     } else {
       try {
         const db = new TreliqDB(config.dbPath);
@@ -88,27 +91,28 @@ export async function startServer(config: StartServerConfig): Promise<void> {
 
         schedulerHandle = startScheduler(schedulerConfig);
       } catch (error: any) {
-        console.error('❌ Failed to start scheduler:', error.message);
+        log.error({ err: error }, 'Failed to start scheduler');
         // Continue without scheduler
       }
     }
   }
 
   // Log startup summary
-  console.error('\n📋 Server Configuration:');
-  console.error(`   Port: ${config.port}`);
-  console.error(`   Host: ${config.host}`);
-  console.error(`   Database: ${config.dbPath}`);
-  console.error(`   Repository: ${config.treliqConfig.repo}`);
-  console.error(`   Webhooks: ${config.webhookSecret ? 'Enabled' : 'Disabled'}`);
-  console.error(`   Scheduler: ${schedulerHandle ? 'Enabled' : 'Disabled'}`);
-  console.error(`   Notifications: ${notifications?.hasChannels ? 'Enabled' : 'Disabled'}`);
+  log.info({
+    port: config.port,
+    host: config.host,
+    dbPath: config.dbPath,
+    repo: config.treliqConfig.repo,
+    webhooks: !!config.webhookSecret,
+    scheduler: !!schedulerHandle,
+    notifications: !!notifications?.hasChannels,
+  }, 'Server configuration');
 
-  console.error('\n🎯 Server ready to accept requests\n');
+  log.info('Server ready to accept requests');
 
   // Handle graceful shutdown
   const shutdown = async (signal: string) => {
-    console.error(`\n🛑 Received ${signal}, shutting down...`);
+    log.info({ signal }, 'Shutting down');
 
     if (schedulerHandle) {
       schedulerHandle.stop();
@@ -116,10 +120,10 @@ export async function startServer(config: StartServerConfig): Promise<void> {
 
     try {
       await fastify.close();
-      console.error('✅ Server shutdown complete');
+      log.info('Server shutdown complete');
       process.exit(0);
     } catch (error) {
-      console.error('❌ Error during shutdown:', error);
+      log.error({ err: error }, 'Error during shutdown');
       process.exit(1);
     }
   };

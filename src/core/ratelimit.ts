@@ -5,6 +5,10 @@
  * to intelligently throttle requests before hitting the limit.
  */
 
+import { createLogger } from './logger';
+
+const log = createLogger('ratelimit');
+
 export class RateLimitManager {
   private remaining = 5000;
   private limit = 5000;
@@ -44,8 +48,9 @@ export class RateLimitManager {
 
     if (waitSec > 0 && this.remaining <= 100) {
       const waitMs = Math.min(waitSec * 1000, 60_000); // Max 60s wait
-      console.error(
-        `⏳ Rate limit low (${this.remaining}/${this.limit}). Waiting ${Math.ceil(waitMs / 1000)}s until reset...`
+      log.warn(
+        { remaining: this.remaining, limit: this.limit, waitSec: Math.ceil(waitMs / 1000) },
+        'Rate limit low, waiting for reset'
       );
       await new Promise(r => setTimeout(r, waitMs));
     }

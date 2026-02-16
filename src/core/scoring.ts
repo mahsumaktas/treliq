@@ -5,6 +5,9 @@
 import type { PRData, ScoredPR, SignalScore } from './types';
 import type { LLMProvider } from './provider';
 import { ConcurrencyController } from './concurrency';
+import { createLogger } from './logger';
+
+const log = createLogger('scoring');
 
 export class ScoringEngine {
   private provider?: LLMProvider;
@@ -25,7 +28,7 @@ export class ScoringEngine {
   /** Score multiple PRs in parallel with concurrency control */
   async scoreMany(prs: PRData[]): Promise<ScoredPR[]> {
     if (prs.length === 0) return [];
-    console.error(`📊 Scoring ${prs.length} PRs (max ${5} concurrent)...`);
+    log.info({ count: prs.length, maxConcurrent: 5 }, 'Scoring PRs');
 
     const results = await Promise.allSettled(
       prs.map(pr => this.concurrency.execute(() => this.score(pr)))
@@ -38,10 +41,10 @@ export class ScoringEngine {
         scored.push(result.value);
       } else {
         failed++;
-        console.warn(`⚠️  Failed to score PR #${prs[i].number}: ${result.reason}`);
+        log.warn({ pr: prs[i].number, err: result.reason }, 'Failed to score PR');
       }
     }
-    if (failed > 0) console.error(`⚠️  ${failed}/${prs.length} PRs failed to score`);
+    if (failed > 0) log.warn({ failed, total: prs.length }, 'Some PRs failed to score');
     return scored;
   }
 
@@ -87,7 +90,7 @@ export class ScoringEngine {
         llmRisk = llmResult.risk;
         llmReason = llmResult.reason;
       } catch (err: any) {
-        console.warn(`⚠️  LLM scoring failed for PR #${pr.number}: ${err.message}`);
+        log.warn({ pr: pr.number, err }, 'LLM scoring failed');
       }
     }
 

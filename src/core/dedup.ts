@@ -6,6 +6,9 @@
 import type { ScoredPR, DedupCluster } from './types';
 import type { LLMProvider } from './provider';
 import { VectorStore, type VectorRecord } from './vectorstore';
+import { createLogger } from './logger';
+
+const log = createLogger('dedup');
 
 export class DedupEngine {
   private duplicateThreshold: number;
@@ -26,7 +29,7 @@ export class DedupEngine {
     if (vectorStorePath) {
       this.vectorStore = new VectorStore();
       this.vectorStore.connect(vectorStorePath).catch(err => {
-        console.error(`   ⚠️  Failed to connect VectorStore: ${err.message}`);
+        log.warn({ err }, 'Failed to connect VectorStore');
         this.vectorStore = undefined;
       });
     }
@@ -36,13 +39,13 @@ export class DedupEngine {
     if (prs.length < 2) return [];
 
     // 1. Embed all PRs
-    console.error(`   Embedding ${prs.length} PRs...`);
+    log.info({ count: prs.length }, 'Embedding PRs');
     const embeddings: Map<number, number[]> = new Map();
     let consecutiveFailures = 0;
 
     for (const pr of prs) {
       if (consecutiveFailures >= 5) {
-        console.warn('   ⚠️  Too many embedding failures, skipping remaining PRs for dedup.');
+        log.warn('Too many embedding failures, skipping remaining PRs for dedup');
         break;
       }
       try {
@@ -55,7 +58,7 @@ export class DedupEngine {
         await new Promise(r => setTimeout(r, 250));
       } catch (err: any) {
         consecutiveFailures++;
-        console.error(`   ⚠️  Failed to embed PR #${pr.number}: ${err.message}`);
+        log.warn({ pr: pr.number, err }, 'Failed to embed PR');
       }
     }
 
@@ -65,7 +68,7 @@ export class DedupEngine {
 
     if (this.vectorStore && embeddedPRs.length > 50) {
       // Use LanceDB ANN for large sets (>50 PRs)
-      console.error(`   Using LanceDB ANN search for ${embeddedPRs.length} PRs...`);
+      log.info({ count: embeddedPRs.length }, 'Using LanceDB ANN search');
       const records: VectorRecord[] = embeddedPRs.map(pr => ({
         prNumber: pr.number,
         embedding: pr.embedding!,

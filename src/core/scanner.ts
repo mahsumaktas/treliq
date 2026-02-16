@@ -14,6 +14,9 @@ import { getReputation } from './reputation';
 import { TreliqDB } from './db';
 import { RateLimitManager } from './ratelimit';
 import { PR_LIST_QUERY, PR_DETAILS_QUERY, SINGLE_PR_QUERY, mapGraphQLToPRData } from './graphql';
+import { createLogger } from './logger';
+
+const log = createLogger('scanner');
 
 const ISSUE_REF_PATTERN = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\s+to|addresses|refs?)\s+#(\d+)/gi;
 export const TEST_PATTERNS = [/test\//, /spec\//, /__test__/, /__tests__/, /\.test\./, /\.spec\./, /_test\.go$/, /Test\.java$/];
@@ -62,7 +65,7 @@ export class TreliqScanner {
 
   async scan(): Promise<TreliqResult> {
     const [owner, repo] = this.config.repo.split('/');
-    console.error(`📡 Fetching open PRs from ${this.config.repo}...`);
+    log.info({ repo: this.config.repo }, 'Fetching open PRs');
 
     // 1. Try loading cache
     const hash = configHash({
@@ -73,7 +76,7 @@ export class TreliqScanner {
       ? loadCache(this.config.cacheFile, this.config.repo, hash)
       : null;
     if (cache) {
-      console.error(`📦 Cache loaded (${Object.keys(cache.prs).length} PRs cached)`);
+      log.info({ cached: Object.keys(cache.prs).length }, 'Cache loaded');
     }
 
     // 2. Fetch PR list (lightweight if using cache)
@@ -86,13 +89,13 @@ export class TreliqScanner {
     // Fetch CODEOWNERS once for the repo
     const codeownersMap = await this.fetchCodeowners(owner, repo);
     if (codeownersMap.size > 0) {
-      console.error(`📋 CODEOWNERS loaded (${codeownersMap.size} patterns)`);
+      log.info({ patterns: codeownersMap.size }, 'CODEOWNERS loaded');
     }
 
     if (cache) {
       // Fetch lightweight list first
       const prList = await this.fetchPRList();
-      console.error(`   Found ${prList.length} open PRs`);
+      log.info({ count: prList.length }, 'Found open PRs');
 
       // Track shas for cache saving
       for (const item of prList) shaMap.set(item.number, item.headSha);
@@ -111,7 +114,7 @@ export class TreliqScanner {
 
       // Full fetch + score only changed/new PRs
       if (toFetch.length > 0) {
-        console.error(`📊 Scoring ${toFetch.length} changed/new PRs (${fromCache} from cache)...`);
+        log.info({ changed: toFetch.length, cached: fromCache }, 'Scoring changed/new PRs');
         const freshPRs = await this.fetchPRDetails(toFetch);
         // Assign codeowners
         for (const pr of freshPRs) {
@@ -124,12 +127,12 @@ export class TreliqScanner {
         scored.push(...scoredBatch);
         reScored += scoredBatch.length;
       } else {
-        console.error(`📊 All ${fromCache} PRs from cache, nothing to re-score`);
+        log.info({ cached: fromCache }, 'All PRs from cache, nothing to re-score');
       }
     } else {
       // No cache — full fetch (shas collected via this.shaMap in fetchPRs)
       prs = await this.fetchPRs();
-      console.error(`   Found ${prs.length} open PRs`);
+      log.info({ count: prs.length }, 'Found open PRs');
 
       // Assign codeowners
       for (const pr of prs) {
@@ -138,7 +141,7 @@ export class TreliqScanner {
 
       // Fetch reputation for unique authors (parallel)
       const uniqueAuthors = [...new Set(prs.map(p => p.author))];
-      console.error(`👤 Fetching reputation for ${uniqueAuthors.length} contributors...`);
+      log.info({ count: uniqueAuthors.length }, 'Fetching reputation for contributors');
       await this.fetchReputations(uniqueAuthors);
 
       const scoredBatch = await this.scoring.scoreMany(prs);
@@ -146,31 +149,31 @@ export class TreliqScanner {
       reScored += scoredBatch.length;
     }
 
-    console.error(`   ✅ ${fromCache} PRs from cache, ${reScored} PRs re-scored`);
+    log.info({ cached: fromCache, reScored }, 'Scoring complete');
 
     // 3. Dedup
     let clusters: DedupCluster[] = [];
     if (this.config.provider) {
       try {
-        console.error('🔍 Finding duplicates via embeddings...');
+        log.info('Finding duplicates via embeddings');
         const dedup = new DedupEngine(
           this.config.duplicateThreshold,
           this.config.relatedThreshold,
           this.config.provider,
         );
         clusters = await dedup.findDuplicates(scored);
-        console.error(`   Found ${clusters.length} duplicate clusters`);
+        log.info({ clusters: clusters.length }, 'Found duplicate clusters');
       } catch (err: any) {
-        console.error(`⚠️  Dedup failed (skipping): ${err.message}`);
+        log.warn({ err }, 'Dedup failed (skipping)');
       }
     } else {
-      console.error('⏭️  Skipping dedup (no LLM provider)');
+      log.info('Skipping dedup (no LLM provider)');
     }
 
     // 4. Vision check
     if (this.config.provider) {
       try {
-        console.error('🔭 Checking vision alignment...');
+        log.info('Checking vision alignment');
         const visionDoc = await this.fetchVisionDoc(owner, repo);
         if (visionDoc) {
           const vision = new VisionChecker(visionDoc, this.config.provider);
@@ -181,15 +184,15 @@ export class TreliqScanner {
               pr.visionScore = result.score;
               pr.visionReason = result.reason;
             } catch (err: any) {
-              console.warn(`⚠️  Vision check failed for PR #${pr.number}: ${err.message}`);
+              log.warn({ pr: pr.number, err }, 'Vision check failed for PR');
               pr.visionAlignment = 'unchecked';
             }
           }
         } else {
-          console.error('   No VISION.md or ROADMAP.md found, skipping');
+          log.info('No VISION.md or ROADMAP.md found, skipping');
         }
       } catch (err: any) {
-        console.error(`⚠️  Vision check failed (skipping): ${err.message}`);
+        log.warn({ err }, 'Vision check failed (skipping)');
       }
     }
 
@@ -222,7 +225,7 @@ export class TreliqScanner {
       // Merge shaMap from fetchPRList and fetchPRs
       for (const [k, v] of this.shaMap) shaMap.set(k, v);
       saveCache(this.config.cacheFile, this.config.repo, scored, shaMap, hash);
-      console.error(`💾 Cache saved to ${this.config.cacheFile}`);
+      log.info({ cacheFile: this.config.cacheFile }, 'Cache saved');
     }
 
     // Save to database
@@ -233,9 +236,9 @@ export class TreliqScanner {
           this.db.upsertPR(repoId, pr, hash);
         }
         this.db.recordScan(repoId, scored.length, spamCount, clusters.length, hash);
-        console.error(`🗄️  Database saved (${scored.length} PRs)`);
+        log.info({ count: scored.length }, 'Database saved');
       } catch (err: any) {
-        console.error(`⚠️  Database save failed: ${err.message}`);
+        log.error({ err }, 'Database save failed');
       }
     }
 
@@ -251,7 +254,7 @@ export class TreliqScanner {
       if (result.status === 'fulfilled') {
         this.scoring.setReputation(authors[i], result.value.reputationScore);
       } else {
-        console.warn(`⚠️  Failed to fetch reputation for ${authors[i]}: ${result.reason}`);
+        log.warn({ author: authors[i], err: result.reason }, 'Failed to fetch reputation');
       }
     }
   }
@@ -263,7 +266,7 @@ export class TreliqScanner {
     try {
       return await this.fetchPRsGraphQL(owner, repo);
     } catch (err: any) {
-      console.error(`⚠️  GraphQL fetch failed, falling back to REST: ${err.message}`);
+      log.warn({ err }, 'GraphQL fetch failed, falling back to REST');
       return await this.fetchPRsREST(owner, repo);
     }
   }
@@ -299,7 +302,7 @@ export class TreliqScanner {
       after = prConnection.pageInfo.endCursor;
     }
 
-    console.error(`   ✨ Fetched ${prs.length} PRs via GraphQL`);
+    log.info({ count: prs.length, method: 'GraphQL' }, 'Fetched PRs');
     return prs;
   }
 
@@ -410,7 +413,7 @@ export class TreliqScanner {
     try {
       return await this.fetchPRListGraphQL(owner, repo);
     } catch (err: any) {
-      console.error(`⚠️  GraphQL PR list failed, falling back to REST: ${err.message}`);
+      log.warn({ err }, 'GraphQL PR list failed, falling back to REST');
       return await this.fetchPRListREST(owner, repo);
     }
   }
@@ -477,7 +480,7 @@ export class TreliqScanner {
     try {
       return await this.fetchPRDetailsGraphQL(owner, repo, prNumbers);
     } catch (err: any) {
-      console.error(`⚠️  GraphQL PR details failed, falling back to REST: ${err.message}`);
+      log.warn({ err }, 'GraphQL PR details failed, falling back to REST');
       return await this.fetchPRDetailsREST(owner, repo, prNumbers);
     }
   }
@@ -497,7 +500,7 @@ export class TreliqScanner {
 
         const node = response.repository?.pullRequest;
         if (!node) {
-          console.warn(`⚠️  PR #${prNum} not found via GraphQL`);
+          log.warn({ pr: prNum }, 'PR not found via GraphQL');
           continue;
         }
 
@@ -505,7 +508,7 @@ export class TreliqScanner {
         this.shaMap.set(pr.number, headSha);
         prs.push(pr);
       } catch (err: any) {
-        console.error(`⚠️  Failed to fetch PR #${prNum} via GraphQL: ${err.message}`);
+        log.error({ pr: prNum, err }, 'Failed to fetch PR via GraphQL');
       }
     }
 
@@ -536,7 +539,7 @@ export class TreliqScanner {
           const files = await this.octokit.pulls.listFiles({ owner, repo, pull_number: prNum, per_page: 100 });
           changedFiles = files.data.map(f => f.filename);
         } catch (err: any) {
-          console.warn(`⚠️  Failed to fetch files for PR #${prNum}: ${err.message}`);
+          log.warn({ pr: prNum, err }, 'Failed to fetch files for PR');
         }
 
         let ciStatus: PRData['ciStatus'] = 'unknown';
@@ -554,7 +557,7 @@ export class TreliqScanner {
             const stateMap: Record<string, PRData['ciStatus']> = { success: 'success', failure: 'failure', pending: 'pending' };
             ciStatus = stateMap[status.data.state] ?? 'unknown';
           } catch (err: any) {
-            console.warn(`⚠️  Failed to fetch CI status for PR #${prNum}: ${err.message}`);
+            log.warn({ pr: prNum, err }, 'Failed to fetch CI status for PR');
           }
         }
 
@@ -568,7 +571,7 @@ export class TreliqScanner {
           else if (states.includes('CHANGES_REQUESTED')) reviewState = 'changes_requested';
           else if (states.some(s => s === 'COMMENTED')) reviewState = 'commented';
         } catch (err: any) {
-          console.warn(`⚠️  Failed to fetch reviews for PR #${prNum}: ${err.message}`);
+          log.warn({ pr: prNum, err }, 'Failed to fetch reviews for PR');
         }
 
         const testFilesChanged = changedFiles.filter(f => TEST_PATTERNS.some(p => p.test(f)));
@@ -594,7 +597,7 @@ export class TreliqScanner {
           codeowners: [],
         });
       } catch (err: any) {
-        console.error(`⚠️  Failed to fetch PR #${prNum}: ${err.message}`);
+        log.error({ pr: prNum, err }, 'Failed to fetch PR');
       }
     }
     return prs;

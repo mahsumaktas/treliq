@@ -1415,6 +1415,17 @@ tbody tr:last-child td{border-bottom:none}
   </main>
 
 <script>
+// ========== HTML Escaping Utility ==========
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 // ========== Global State ==========
 let data=null;
 let sortCol='totalScore',sortAsc=false;
@@ -1593,9 +1604,9 @@ function renderOverview(){
       return `<div class="mini-pr" onclick="goToPR(${pr.number})">
         <div class="mini-pr-header">
           <span class="mini-score" style="background:${bg};color:${c}">${pr.totalScore}</span>
-          <span class="mini-pr-title">${(pr.title||'').slice(0,50)}</span>
+          <span class="mini-pr-title">${escapeHtml((pr.title||'').slice(0,50))}</span>
         </div>
-        <div class="mini-pr-author">@${pr.author||''} &middot; #${pr.number}</div>
+        <div class="mini-pr-author">@${escapeHtml(pr.author||'')} &middot; #${pr.number}</div>
       </div>`;
     }).join('');
   }
@@ -1697,7 +1708,7 @@ function renderPRTable(){
     repos.forEach(r=>{
       const count=prs.filter(p=>(p._repo||data.repo||'')===r).length;
       const opt=document.createElement('option');
-      opt.value=r;opt.textContent=r+' ('+count+')';
+      opt.value=r;opt.textContent=escapeHtml(r)+' ('+count+')';
       repoSelect.appendChild(opt);
     });
     repoSelect.value=current;
@@ -1746,17 +1757,17 @@ function renderPRTable(){
     }
 
     return `<tr>
-      <td style="color:var(--muted);font-size:10px" title="${repo}">${repoShort}</td>
-      <td><a class="pr-link" href="https://github.com/${repo}/pull/${pr.number}" target="_blank">#${pr.number}</a></td>
+      <td style="color:var(--muted);font-size:10px" title="${escapeHtml(repo)}">${escapeHtml(repoShort)}</td>
+      <td><a class="pr-link" href="https://github.com/${escapeHtml(repo)}/pull/${pr.number}" target="_blank">#${pr.number}</a></td>
       <td><span class="score-pill"><span class="bar" style="background:${c};width:${Math.max(pr.totalScore*.4,3)}px"></span><span class="num">${pr.totalScore}</span></span></td>
-      <td title="${(pr.title||'').replace(/"/g,'&quot;')}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${(pr.title||'').slice(0,60)}</td>
-      <td style="color:var(--muted);font-size:11px">@${pr.author||''}</td>
+      <td title="${escapeHtml(pr.title||'')}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${escapeHtml((pr.title||'').slice(0,60))}</td>
+      <td style="color:var(--muted);font-size:11px">@${escapeHtml(pr.author||'')}</td>
       <td>${pr.isDraft?'<span class="badge-pill badge-draft">Draft</span>':''}</td>
       <td>${pr.filesChanged||0}</td>
       <td>${pr.isSpam?'<span class="spam">Spam</span>':'<span class="no-spam">\u2713</span>'}</td>
       <td>${pr.ageInDays!=null?pr.ageInDays+'d':'\u2014'}</td>
       <td>${pr.mergeable==='conflicting'?'<span class="spam">Conflict</span>':(pr.mergeable==='mergeable'?'<span class="no-spam">\u2713</span>':'<span style="color:var(--muted);font-size:10px" title="GitHub pending">\u23F3</span>')}</td>
-      <td style="color:var(--muted);font-size:11px">${pr.milestone||'\u2014'}</td>
+      <td style="color:var(--muted);font-size:11px">${escapeHtml(pr.milestone||'\u2014')}</td>
       <td>${reviewerCount>0?'<span style="color:var(--blue);font-weight:600">'+reviewerCount+'</span>':'\u2014'}</td>
       <td>${risk.cls?`<span class="risk-pill ${risk.cls}">${risk.level}</span>`:risk.level}</td>
       <td>${pr.visionAlignment==='unchecked'?'N/A':(pr.visionScore!=null?pr.visionScore:'\u2014')}</td>
@@ -1799,7 +1810,7 @@ function renderClusters(){
     repoSelect.innerHTML='<option value="">All Repos</option>';
     allRepos.forEach(r=>{
       const opt=document.createElement('option');
-      opt.value=r;opt.textContent=r;
+      opt.value=r;opt.textContent=escapeHtml(r);
       repoSelect.appendChild(opt);
     });
     repoSelect.value=current;
@@ -1842,8 +1853,8 @@ function renderClusters(){
           <span class="connector"></span>
           <span class="pr-num">#${p.number}</span>
           <span class="pr-score" style="background:${p.totalScore>=70?'var(--green-bg)':p.totalScore>=40?'var(--yellow-bg)':'var(--red-bg)'};color:${sc}">${p.totalScore}</span>
-          ${allRepos.length>1?`<span class="pr-repo">${repo}</span>`:''}
-          <span style="color:var(--text-secondary);font-size:12px">${(p.title||'').slice(0,55)}</span>
+          ${allRepos.length>1?`<span class="pr-repo">${escapeHtml(repo)}</span>`:''}
+          <span style="color:var(--text-secondary);font-size:12px">${escapeHtml((p.title||'').slice(0,55))}</span>
         </li>`;
       }).join('')}</ul>
     </div>`).join('');
@@ -1963,8 +1974,9 @@ async function connectToServer(){
     select.innerHTML='<option value="">Select repository...</option>';
     (reposData.repos||[]).forEach(repo=>{
       const opt=document.createElement('option');
-      opt.value=`${repo.owner}/${repo.name}`;
-      opt.textContent=`${repo.owner}/${repo.name}`;
+      const repoFullName=`${repo.owner}/${repo.name}`;
+      opt.value=repoFullName;
+      opt.textContent=escapeHtml(repoFullName);
       select.appendChild(opt);
     });
 
@@ -2081,7 +2093,7 @@ function connectSSE(url){
 
   eventSource.addEventListener('scan_complete',(e)=>{
     const d=JSON.parse(e.data);
-    showToast(`Scan complete for ${d.repo}: ${d.totalPRs} PRs`);
+    showToast(`Scan complete for ${escapeHtml(d.repo)}: ${d.totalPRs} PRs`);
     // Auto-refresh if we're viewing this repo
     if(currentRepo===d.repo){
       loadRepoPRs();
@@ -2091,7 +2103,7 @@ function connectSSE(url){
 
   eventSource.addEventListener('scan_start',(e)=>{
     const d=JSON.parse(e.data);
-    showToast(`Scan started for ${d.repo}...`);
+    showToast(`Scan started for ${escapeHtml(d.repo)}...`);
   });
 
   eventSource.addEventListener('pr_scored',(e)=>{
@@ -2105,7 +2117,7 @@ function connectSSE(url){
 
   eventSource.addEventListener('pr_closed',(e)=>{
     const d=JSON.parse(e.data);
-    showToast(`PR #${d.prNumber} ${d.state}`);
+    showToast(`PR #${d.prNumber} ${escapeHtml(d.state)}`);
     if(currentRepo===d.repo){
       loadRepoPRs();
     }

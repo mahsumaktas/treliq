@@ -8,13 +8,16 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { TreliqScanner } from '../core/scanner';
 import { TreliqDB } from '../core/db';
 import type { TreliqConfig } from '../core/types';
 import type { SSEBroadcaster } from './sse';
 import { getAuthMode, getAppConfig } from '../core/app-config';
 import { createAppOctokit, clearTokenCache } from '../core/auth';
+import { createLogger } from '../core/logger';
+
+const log = createLogger('webhooks');
 
 export interface WebhookConfig {
   secret: string;
@@ -67,17 +70,20 @@ interface WebhookPayload {
 /**
  * Verify GitHub webhook signature using HMAC-SHA256
  */
-function verifySignature(payload: string, signature: string, secret: string): boolean {
+export function verifySignature(payload: string, signature: string, secret: string): boolean {
   if (!signature) return false;
 
   const hmac = createHmac('sha256', secret);
   hmac.update(payload, 'utf8');
-  const digest = `sha256=${hmac.digest('hex')}`;
+  const expected = `sha256=${hmac.digest('hex')}`;
 
-  // Constant-time comparison to prevent timing attacks
-  if (signature.length !== digest.length) return false;
+  if (signature.length !== expected.length) return false;
 
-  return signature === digest;
+  try {
+    return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -89,18 +95,12 @@ export function registerWebhooks(
 ): void {
   fastify.post(
     '/webhooks',
-    {
-      config: {
-        // Raw body needed for signature verification
-        rawBody: true,
-      },
-    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const signature = request.headers['x-hub-signature-256'] as string | undefined;
       const event = request.headers['x-github-event'] as string | undefined;
       const deliveryId = request.headers['x-github-delivery'] as string | undefined;
 
-      console.error(`📨 Webhook received: ${event} (delivery: ${deliveryId})`);
+      log.info({ event, deliveryId }, 'Webhook received');
 
       // Get raw body for signature verification
       let rawBody: string;
@@ -114,7 +114,7 @@ export function registerWebhooks(
 
       // Verify signature
       if (!signature || !verifySignature(rawBody, signature, config.secret)) {
-        console.error('⚠️  Invalid webhook signature');
+        log.warn('Invalid webhook signature');
         return reply.code(401).send({
           error: 'Invalid signature',
         });
@@ -134,14 +134,14 @@ export function registerWebhooks(
           await handleInstallationReposEvent(payload, config);
           return reply.code(200).send({ status: 'processed' });
         } else if (event === 'ping') {
-          console.error('🏓 Webhook ping received');
+          log.info('Webhook ping received');
           return reply.code(200).send({ status: 'pong' });
         } else {
-          console.error(`⏭️  Ignoring event: ${event}`);
+          log.debug({ event }, 'Ignoring event');
           return reply.code(200).send({ status: 'ignored' });
         }
       } catch (error: any) {
-        console.error(`❌ Webhook processing error:`, error);
+        log.error({ err: error }, 'Webhook processing error');
         return reply.code(500).send({
           error: 'Webhook processing failed',
           message: error.message,
@@ -150,8 +150,8 @@ export function registerWebhooks(
     }
   );
 
-  console.error('✅ Webhook endpoint registered at POST /webhooks');
-  console.error('   Events: pull_request, installation, installation_repositories, ping');
+  log.info('Webhook endpoint registered at POST /webhooks');
+  log.info('Listening for: pull_request, installation, installation_repositories, ping');
 }
 
 /**
@@ -164,7 +164,7 @@ async function handlePullRequestEvent(
   const { action, pull_request, repository } = payload;
 
   if (!pull_request || !repository) {
-    console.error('⚠️  Missing pull_request or repository in payload');
+    log.warn('Missing pull_request or repository in payload');
     return;
   }
 
@@ -173,7 +173,7 @@ async function handlePullRequestEvent(
   const prNumber = pull_request.number;
   const repoFullName = `${owner}/${repo}`;
 
-  console.error(`📋 Processing ${action} for ${repoFullName}#${prNumber}`);
+  log.info({ action, repo: repoFullName, pr: prNumber }, 'Processing PR event');
 
   const repoId = config.db.upsertRepository(owner, repo);
 
@@ -182,13 +182,13 @@ async function handlePullRequestEvent(
       case 'opened':
         // New PR opened - score it
         await scorePR(repoFullName, prNumber, config);
-        console.error(`✅ Scored new PR ${repoFullName}#${prNumber}`);
+        log.info({ repo: repoFullName, pr: prNumber }, 'Scored new PR');
         break;
 
       case 'synchronize':
         // PR updated (new commits) - re-score
         await scorePR(repoFullName, prNumber, config);
-        console.error(`✅ Re-scored updated PR ${repoFullName}#${prNumber}`);
+        log.info({ repo: repoFullName, pr: prNumber }, 'Re-scored updated PR');
         break;
 
       case 'closed':
@@ -201,21 +201,21 @@ async function handlePullRequestEvent(
           state: newState,
           timestamp: new Date().toISOString(),
         });
-        console.error(`✅ Updated PR ${repoFullName}#${prNumber} state to ${newState}`);
+        log.info({ repo: repoFullName, pr: prNumber, state: newState }, 'Updated PR state');
         break;
 
       case 'reopened':
         // PR reopened - update state and re-score
         config.db.updatePRState(repoId, prNumber, 'open');
         await scorePR(repoFullName, prNumber, config);
-        console.error(`✅ Re-opened and re-scored PR ${repoFullName}#${prNumber}`);
+        log.info({ repo: repoFullName, pr: prNumber }, 'Re-opened and re-scored PR');
         break;
 
       default:
-        console.error(`⏭️  Ignoring action: ${action}`);
+        log.debug({ action }, 'Ignoring PR action');
     }
   } catch (error: any) {
-    console.error(`❌ Failed to process PR ${repoFullName}#${prNumber}:`, error.message);
+    log.error({ repo: repoFullName, pr: prNumber, err: error }, 'Failed to process PR');
     throw error;
   }
 }
@@ -230,7 +230,7 @@ async function handleInstallationEvent(
   const { action, installation, repositories } = payload;
 
   if (!installation) {
-    console.error('⚠️  Missing installation in payload');
+    log.warn('Missing installation in payload');
     return;
   }
 
@@ -238,7 +238,7 @@ async function handleInstallationEvent(
 
   switch (action) {
     case 'created':
-      console.error(`📦 New installation: ${account.login} (${account.type}) [${id}]`);
+      log.info({ installationId: id, account: account.login, accountType: account.type }, 'New installation');
       config.db.upsertInstallation(id, account.type, account.login);
 
       // Link accessible repositories
@@ -248,7 +248,7 @@ async function handleInstallationEvent(
           const repoId = config.db.upsertRepository(owner, name);
           config.db.linkInstallationRepo(id, repoId);
         }
-        console.error(`   Linked ${repositories.length} repositories`);
+        log.info({ installationId: id, repoCount: repositories.length }, 'Linked repositories');
       }
 
       config.broadcaster?.broadcast('installation_created', {
@@ -261,7 +261,7 @@ async function handleInstallationEvent(
       break;
 
     case 'deleted':
-      console.error(`🗑️  Installation removed: ${account.login} [${id}]`);
+      log.info({ installationId: id, account: account.login }, 'Installation removed');
       clearTokenCache(id);
       config.db.deleteInstallation(id);
 
@@ -273,18 +273,18 @@ async function handleInstallationEvent(
       break;
 
     case 'suspend':
-      console.error(`⏸️  Installation suspended: ${account.login} [${id}]`);
+      log.info({ installationId: id, account: account.login }, 'Installation suspended');
       config.db.suspendInstallation(id, true);
       clearTokenCache(id);
       break;
 
     case 'unsuspend':
-      console.error(`▶️  Installation unsuspended: ${account.login} [${id}]`);
+      log.info({ installationId: id, account: account.login }, 'Installation unsuspended');
       config.db.suspendInstallation(id, false);
       break;
 
     default:
-      console.error(`⏭️  Ignoring installation action: ${action}`);
+      log.debug({ action }, 'Ignoring installation action');
   }
 }
 
@@ -298,7 +298,7 @@ async function handleInstallationReposEvent(
   const { action, installation, repositories_added, repositories_removed } = payload;
 
   if (!installation) {
-    console.error('⚠️  Missing installation in payload');
+    log.warn('Missing installation in payload');
     return;
   }
 
@@ -310,7 +310,7 @@ async function handleInstallationReposEvent(
       const repoId = config.db.upsertRepository(owner, name);
       config.db.linkInstallationRepo(installationId, repoId);
     }
-    console.error(`📦 Added ${repositories_added.length} repos to installation ${installationId}`);
+    log.info({ installationId, repoCount: repositories_added.length }, 'Added repos to installation');
   }
 
   if (action === 'removed' && repositories_removed) {
@@ -323,7 +323,7 @@ async function handleInstallationReposEvent(
         config.db.unlinkInstallationRepo(installationId, found.id);
       }
     }
-    console.error(`📦 Removed ${repositories_removed.length} repos from installation ${installationId}`);
+    log.info({ installationId, repoCount: repositories_removed.length }, 'Removed repos from installation');
   }
 }
 
@@ -363,7 +363,7 @@ async function scorePR(
   const configHash = 'webhook'; // Use a special hash for webhook-triggered scores
   config.db.upsertPR(repoId, scoredPR, configHash);
 
-  console.error(`   Score: ${scoredPR.totalScore}/100 ${scoredPR.isSpam ? '(SPAM)' : ''}`);
+  log.info({ score: scoredPR.totalScore, isSpam: scoredPR.isSpam }, 'PR scored');
 
   // Broadcast to connected dashboard clients
   config.broadcaster?.broadcast('pr_scored', {

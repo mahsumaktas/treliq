@@ -5,6 +5,9 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import type { ScoredPR } from './types';
+import { createLogger } from './logger';
+
+const log = createLogger('cache');
 
 export interface CachedPR {
   updatedAt: string;
@@ -35,7 +38,7 @@ export function loadCache(cacheFile: string, repo: string, hash?: string): Treli
     if (raw.repo !== repo) return null;
     // Invalidate cache if config changed (backwards compatible with old caches without hash)
     if (hash && raw.configHash && raw.configHash !== hash) {
-      console.error('📦 Cache invalidated (config changed)');
+      log.info('Cache invalidated (config changed)');
       return null;
     }
     return raw;

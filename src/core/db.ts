@@ -34,6 +34,19 @@ export interface GetPRsOptions {
 export class TreliqDB {
   private db: Database.Database;
 
+  private static readonly ALLOWED_SORT_COLUMNS: Record<string, string> = {
+    'total_score DESC': 'total_score DESC',
+    'total_score ASC': 'total_score ASC',
+    'pr_number DESC': 'pr_number DESC',
+    'pr_number ASC': 'pr_number ASC',
+    'created_at DESC': 'created_at DESC',
+    'created_at ASC': 'created_at ASC',
+    'updated_at DESC': 'updated_at DESC',
+    'updated_at ASC': 'updated_at ASC',
+    'age_in_days DESC': 'age_in_days DESC',
+    'age_in_days ASC': 'age_in_days ASC',
+  };
+
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
@@ -361,7 +374,8 @@ export class TreliqDB {
       params.push(state);
     }
 
-    sql += ` ORDER BY ${sortBy}`;
+    const safeSortBy = TreliqDB.ALLOWED_SORT_COLUMNS[sortBy] ?? 'total_score DESC';
+    sql += ` ORDER BY ${safeSortBy}`;
 
     if (limit) {
       sql += ' LIMIT ? OFFSET ?';

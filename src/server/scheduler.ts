@@ -10,6 +10,9 @@ import { TreliqScanner } from '../core/scanner';
 import { TreliqDB } from '../core/db';
 import { NotificationDispatcher } from '../core/notifications';
 import type { TreliqConfig } from '../core/types';
+import { createLogger } from '../core/logger';
+
+const log = createLogger('scheduler');
 
 export interface SchedulerConfig {
   cronExpression: string;
@@ -38,9 +41,11 @@ export function startScheduler(config: SchedulerConfig): SchedulerHandle {
     throw new Error(`Invalid cron expression: ${config.cronExpression}`);
   }
 
-  console.error(`⏰ Scheduler configured for ${config.repos.length} repositories`);
-  console.error(`   Schedule: ${config.cronExpression}`);
-  console.error(`   Repositories: ${config.repos.join(', ')}`);
+  log.info({
+    repoCount: config.repos.length,
+    cron: config.cronExpression,
+    repos: config.repos,
+  }, 'Scheduler configured');
 
   let isRunning = false;
 
@@ -48,21 +53,21 @@ export function startScheduler(config: SchedulerConfig): SchedulerHandle {
     config.cronExpression,
     async () => {
       if (isRunning) {
-        console.error('⏭️  Previous scan still running, skipping this cycle');
+        log.warn('Previous scan still running, skipping this cycle');
         return;
       }
 
       isRunning = true;
       const startTime = Date.now();
 
-      console.error(`\n🕐 ${new Date().toISOString()} - Starting scheduled scan...`);
+      log.info('Starting scheduled scan');
 
       try {
         await scanAllRepositories(config);
         const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.error(`✅ Scheduled scan complete (${duration}s)\n`);
+        log.info({ durationSec: parseFloat(duration) }, 'Scheduled scan complete');
       } catch (error: any) {
-        console.error(`❌ Scheduled scan failed:`, error.message);
+        log.error({ err: error }, 'Scheduled scan failed');
       } finally {
         isRunning = false;
       }
@@ -73,12 +78,12 @@ export function startScheduler(config: SchedulerConfig): SchedulerHandle {
   );
 
   task.start();
-  console.error('✅ Scheduler started');
+  log.info('Scheduler started');
 
   return {
     stop: () => {
       task.stop();
-      console.error('🛑 Scheduler stopped');
+      log.info('Scheduler stopped');
     },
     isRunning: () => isRunning,
   };
@@ -97,7 +102,7 @@ async function scanAllRepositories(config: SchedulerConfig): Promise<void> {
 
   for (const repo of config.repos) {
     try {
-      console.error(`\n📡 Scanning ${repo}...`);
+      log.info({ repo }, 'Scanning repository');
 
       const scanConfig: TreliqConfig = {
         ...config.treliqConfig,
@@ -140,7 +145,7 @@ async function scanAllRepositories(config: SchedulerConfig): Promise<void> {
         }
       }
     } catch (error: any) {
-      console.error(`❌ Failed to scan ${repo}:`, error.message);
+      log.error({ repo, err: error }, 'Failed to scan repository');
       results.failed++;
 
       // Send error notification
@@ -152,16 +157,17 @@ async function scanAllRepositories(config: SchedulerConfig): Promise<void> {
             message: `Scan failed: ${error.message}`,
           });
         } catch (notifError: any) {
-          console.error(`⚠️  Failed to send error notification:`, notifError.message);
+          log.warn({ err: notifError }, 'Failed to send error notification');
         }
       }
     }
   }
 
   // Log summary
-  console.error(`\n📊 Scan Summary:`);
-  console.error(`   Successful: ${results.successful}`);
-  console.error(`   Failed: ${results.failed}`);
-  console.error(`   Total PRs: ${results.totalPRs}`);
-  console.error(`   Total Spam: ${results.totalSpam}`);
+  log.info({
+    successful: results.successful,
+    failed: results.failed,
+    totalPRs: results.totalPRs,
+    totalSpam: results.totalSpam,
+  }, 'Scan summary');
 }

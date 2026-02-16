@@ -8,6 +8,8 @@
 import path from 'path';
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
+import helmet from '@fastify/helmet';
 import fastifyStatic from '@fastify/static';
 import { TreliqDB } from '../core/db';
 import { TreliqScanner } from '../core/scanner';
@@ -15,6 +17,9 @@ import type { TreliqConfig } from '../core/types';
 import { registerWebhooks } from './webhooks';
 import { SSEBroadcaster } from './sse';
 import { getAuthMode, getAppConfig } from '../core/app-config';
+import { createLogger } from '../core/logger';
+
+const log = createLogger('server');
 
 export interface ServerConfig {
   port: number;
@@ -46,13 +51,42 @@ interface QueryParams {
  */
 export async function createServer(config: ServerConfig): Promise<FastifyInstance> {
   const fastify = Fastify({
-    logger: false, // We use console.error for consistency with CLI
+    logger: false, // We use Pino logger (src/core/logger.ts) for structured logging
     requestTimeout: 120000, // 2 minutes for scan operations
   });
 
-  // Enable CORS
+  // CORS — configurable via CORS_ORIGINS env var
+  const allowedOrigins = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
+    : undefined; // undefined = allow all in development
+
   await fastify.register(cors, {
-    origin: true, // Allow all origins (adjust for production)
+    origin: allowedOrigins ?? true,
+  });
+
+  // Security headers
+  await fastify.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        imgSrc: ["'self'", 'data:', 'https://github.com', 'https://avatars.githubusercontent.com'],
+        connectSrc: ["'self'"],
+      },
+    },
+  });
+
+  // Rate limiting
+  await fastify.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+    errorResponseBuilder: () => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: 'Rate limit exceeded. Please retry later.',
+    }),
   });
 
   // Serve dashboard static files at root
@@ -65,7 +99,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
 
   // Initialize database
   const db = new TreliqDB(config.dbPath);
-  console.error(`📂 Database opened: ${config.dbPath}`);
+  log.info({ dbPath: config.dbPath }, 'Database opened');
 
   // SSE broadcaster for real-time dashboard updates
   const broadcaster = new SSEBroadcaster();
@@ -74,22 +108,32 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
 
   // Graceful shutdown
   const closeGracefully = async (signal: string) => {
-    console.error(`\n🛑 Received ${signal}, closing server gracefully...`);
+    log.info({ signal }, 'Received signal, closing server gracefully');
     try {
       clearInterval(keepaliveInterval);
       broadcaster.closeAll();
       db.close();
       await fastify.close();
-      console.error('✅ Server closed');
+      log.info('Server closed');
       process.exit(0);
     } catch (err) {
-      console.error('❌ Error during shutdown:', err);
+      log.error({ err }, 'Error during shutdown');
       process.exit(1);
     }
   };
 
   process.on('SIGTERM', () => closeGracefully('SIGTERM'));
   process.on('SIGINT', () => closeGracefully('SIGINT'));
+
+  // Input validation schemas
+  const repoParamSchema = {
+    type: 'object' as const,
+    properties: {
+      owner: { type: 'string' as const, pattern: '^[a-zA-Z0-9._-]+$', maxLength: 39 },
+      repo: { type: 'string' as const, pattern: '^[a-zA-Z0-9._-]+$', maxLength: 100 },
+    },
+    required: ['owner', 'repo'] as const,
+  };
 
   // ========== Health Check ==========
 
@@ -111,7 +155,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
       const repos = db.getRepositories();
       return { repos };
     } catch (error: any) {
-      console.error('❌ Failed to list repositories:', error);
+      log.error({ err: error }, 'Failed to list repositories');
       return reply.code(500).send({
         error: 'Failed to list repositories',
         message: error.message,
@@ -125,6 +169,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
    */
   fastify.get<{ Params: RepoParams; Querystring: QueryParams }>(
     '/api/repos/:owner/:repo/prs',
+    { schema: { params: repoParamSchema } },
     async (request, reply) => {
       const { owner, repo } = request.params;
       const { limit, offset, sortBy, state } = request.query;
@@ -144,7 +189,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
           prs,
         };
       } catch (error: any) {
-        console.error(`❌ Failed to list PRs for ${owner}/${repo}:`, error);
+        log.error({ repo: `${owner}/${repo}`, err: error }, 'Failed to list PRs');
         return reply.code(500).send({
           error: 'Failed to list PRs',
           message: error.message,
@@ -158,6 +203,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
    */
   fastify.get<{ Params: RepoPRParams }>(
     '/api/repos/:owner/:repo/prs/:number',
+    { schema: { params: repoParamSchema } },
     async (request, reply) => {
       const { owner, repo, number } = request.params;
       const prNumber = parseInt(number, 10);
@@ -182,7 +228,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
 
         return { pr };
       } catch (error: any) {
-        console.error(`❌ Failed to get PR #${prNumber} for ${owner}/${repo}:`, error);
+        log.error({ repo: `${owner}/${repo}`, pr: prNumber, err: error }, 'Failed to get PR');
         return reply.code(500).send({
           error: 'Failed to get PR',
           message: error.message,
@@ -197,11 +243,20 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
    */
   fastify.post<{ Params: RepoParams }>(
     '/api/repos/:owner/:repo/scan',
+    {
+      schema: { params: repoParamSchema },
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: '5 minutes',
+        },
+      },
+    },
     async (request, reply) => {
       const { owner, repo } = request.params;
       const repoFullName = `${owner}/${repo}`;
 
-      console.error(`🚀 Starting scan for ${repoFullName}...`);
+      log.info({ repo: repoFullName }, 'Starting scan');
       broadcaster.broadcast('scan_start', { repo: repoFullName, timestamp: new Date().toISOString() });
 
       try {
@@ -215,7 +270,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
         const scanner = new TreliqScanner(scanConfig);
         const result = await scanner.scan();
 
-        console.error(`✅ Scan complete for ${repoFullName}: ${result.totalPRs} PRs, ${result.spamCount} spam`);
+        log.info({ repo: repoFullName, totalPRs: result.totalPRs, spamCount: result.spamCount }, 'Scan complete');
 
         // Broadcast to connected dashboard clients
         broadcaster.broadcast('scan_complete', {
@@ -228,7 +283,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
 
         return result;
       } catch (error: any) {
-        console.error(`❌ Scan failed for ${repoFullName}:`, error);
+        log.error({ repo: repoFullName, err: error }, 'Scan failed');
         return reply.code(500).send({
           error: 'Scan failed',
           message: error.message,
@@ -243,6 +298,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
    */
   fastify.get<{ Params: RepoParams; Querystring: { limit?: string } }>(
     '/api/repos/:owner/:repo/scans',
+    { schema: { params: repoParamSchema } },
     async (request, reply) => {
       const { owner, repo } = request.params;
       const { limit } = request.query;
@@ -256,7 +312,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
           history,
         };
       } catch (error: any) {
-        console.error(`❌ Failed to get scan history for ${owner}/${repo}:`, error);
+        log.error({ repo: `${owner}/${repo}`, err: error }, 'Failed to get scan history');
         return reply.code(500).send({
           error: 'Failed to get scan history',
           message: error.message,
@@ -270,6 +326,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
    */
   fastify.get<{ Params: RepoParams }>(
     '/api/repos/:owner/:repo/spam',
+    { schema: { params: repoParamSchema } },
     async (request, reply) => {
       const { owner, repo } = request.params;
 
@@ -283,7 +340,7 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
           spamPRs,
         };
       } catch (error: any) {
-        console.error(`❌ Failed to get spam PRs for ${owner}/${repo}:`, error);
+        log.error({ repo: `${owner}/${repo}`, err: error }, 'Failed to get spam PRs');
         return reply.code(500).send({
           error: 'Failed to get spam PRs',
           message: error.message,
@@ -517,7 +574,7 @@ GITHUB_CLIENT_SECRET=${appData.client_secret}
 </body></html>`);
 
       } catch (error: any) {
-        console.error('❌ GitHub App creation failed:', error);
+        log.error({ err: error }, 'GitHub App creation failed');
         reply.code(500).type('text/html').send(`<!DOCTYPE html>
 <html><head><title>Treliq Setup - Error</title>
 <style>body{font-family:system-ui;background:#0a0a0f;color:#e6edf3;display:flex;justify-content:center;padding:40px}
@@ -548,7 +605,7 @@ a{color:#58a6ff}code{background:#1a1b26;padding:2px 6px;border-radius:4px;font-s
   // ========== Webhook Registration ==========
 
   if (config.webhookSecret) {
-    console.error('🔗 Registering GitHub webhook handler...');
+    log.info('Registering GitHub webhook handler');
     registerWebhooks(fastify, {
       secret: config.webhookSecret,
       treliqConfig: config.treliqConfig,
@@ -560,10 +617,12 @@ a{color:#58a6ff}code{background:#1a1b26;padding:2px 6px;border-radius:4px;font-s
   // ========== Error Handler ==========
 
   fastify.setErrorHandler((error: Error, request, reply) => {
-    console.error('❌ Request error:', error);
+    log.error({ err: error }, 'Request error');
     reply.code(500).send({
       error: 'Internal server error',
-      message: error.message,
+      message: process.env.NODE_ENV === 'production'
+        ? 'An unexpected error occurred'
+        : error.message,
     });
   });
 

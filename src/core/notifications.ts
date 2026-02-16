@@ -2,6 +2,10 @@
  * Notification dispatcher for Slack and Discord webhooks
  */
 
+import { createLogger } from './logger';
+
+const log = createLogger('notifications');
+
 export interface NotificationConfig {
   slackWebhook?: string;
   discordWebhook?: string;
@@ -73,7 +77,7 @@ export class NotificationDispatcher {
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         const channel = index === 0 ? 'Slack' : 'Discord';
-        console.error(`Failed to send ${channel} notification:`, result.reason);
+        log.error({ channel, err: result.reason }, 'Failed to send notification');
       }
     });
   }
@@ -145,7 +149,7 @@ export class NotificationDispatcher {
         throw new Error(`Slack API error: ${response.status} ${response.statusText}`);
       }
     } catch (error) {
-      console.error('Slack notification failed:', error);
+      log.error({ err: error }, 'Slack notification failed');
       throw error;
     }
   }
@@ -198,7 +202,7 @@ export class NotificationDispatcher {
         throw new Error(`Discord API error: ${response.status} ${response.statusText}`);
       }
     } catch (error) {
-      console.error('Discord notification failed:', error);
+      log.error({ err: error }, 'Discord notification failed');
       throw error;
     }
   }
