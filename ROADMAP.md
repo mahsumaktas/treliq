@@ -25,19 +25,31 @@
 - 9-signal scoring (added test coverage, staleness, mergeability)
 - Live demo: [mahsumaktas.github.io/treliq](https://mahsumaktas.github.io/treliq/)
 
-## v0.4 — Real-Time & Persistence (Planned)
+## v0.4 — Platform Mode ✅
 
-- Webhook-based real-time PR updates
-- Incremental DB with SQLite for history tracking
-- Cross-repo analysis (scan multiple repos at once)
-- Custom scoring rule overrides
+- **Server Mode**: REST API via Fastify (`treliq server --port 3000`)
+- **GraphQL API**: Single-query PR fetching (~80% fewer API calls vs REST)
+- **18-Signal Scoring**: 5 new signals (draft status, milestone, label priority, codeowners, requested reviewers)
+- **SQLite Persistence**: Incremental DB with WAL mode for history tracking
+- **Webhook Handler**: Real-time PR scoring on push events (HMAC-SHA256 verified)
+- **Scheduled Scans**: Cron-based automatic re-scans via node-cron
+- **Rate Limit Manager**: Smart GitHub API throttling (auto-pause, slow-down)
+- **Parallel LLM Processing**: Concurrent scoring with semaphore-based concurrency control (3x faster)
+- **LanceDB Vector Store**: ANN search for semantic dedup (replaces O(n²) brute-force for >50 PRs)
+- **Live Dashboard**: API-connected dashboard with server auto-detection
+- **Real-time SSE Updates**: Server-Sent Events for live dashboard refresh (scan_complete, pr_scored, pr_closed)
+- **GitHub App Manifest**: One-click GitHub App creation for webhook setup
+- **Slack/Discord Notifications**: Scan result alerts via webhook URLs
+- **New CLI Commands**: `close-spam`, `label-by-score`, `server`
 
 ## v0.5 — Distribution (Planned)
 
 - npm publish (`npm install -g treliq`)
-- GitHub Marketplace App (one-click install)
-- Slack / Discord notifications
-- Team-based triage queues
+- Multi-repo dashboard (unified view across all repos)
+- Team-based triage queues (assign PRs to reviewers)
+- Custom scoring rule overrides (YAML config)
+- Fine-tuned model support (custom LLM for domain-specific scoring)
+- GitHub Marketplace App listing
 
 ---
 

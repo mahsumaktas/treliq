@@ -23,7 +23,7 @@
   --shadow:0 3px 12px rgba(0,0,0,.08);--shadow-hover:0 6px 20px rgba(0,0,0,.12);
 }
 body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6;transition:var(--transition);min-height:100vh;display:flex;flex-direction:column}
-.container{max-width:1280px;margin:0 auto;padding:24px;flex:1;width:100%}
+.container{max-width:1400px;margin:0 auto;padding:24px;flex:1;width:100%}
 
 /* Header */
 header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;padding:16px 24px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
@@ -32,11 +32,22 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 [data-theme="dark"] .header-left img{background:#fff;padding:4px 8px;border-radius:6px}
 header h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
 header h1 span{color:var(--green)}
+.header-right{display:flex;align-items:center;gap:10px}
+.conn-status{display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 12px;border-radius:20px;font-weight:600;border:1px solid var(--border)}
+.conn-status.connected{color:var(--green);border-color:var(--green);background:var(--green-bg)}
+.conn-status.disconnected{color:var(--muted);border-color:var(--border)}
 .theme-toggle{background:var(--surface2);border:1px solid var(--border);color:var(--text);width:42px;height:42px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:20px;transition:var(--transition)}
 .theme-toggle:hover{border-color:var(--border-hover);transform:scale(1.08)}
 
+/* Toast */
+.toast-container{position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--surface);border:1px solid var(--green);color:var(--text);padding:12px 20px;border-radius:8px;box-shadow:var(--shadow-hover);font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;animation:slideIn .3s ease;max-width:360px}
+.toast.error{border-color:var(--red)}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes slideOut{from{transform:translateX(0);opacity:1}to{transform:translateX(100%);opacity:0}}
+
 /* Stats */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:28px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;box-shadow:var(--shadow);transition:var(--transition);position:relative;overflow:hidden}
 .stat:hover{box-shadow:var(--shadow-hover);transform:translateY(-2px);border-color:var(--border-hover)}
 .stat::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
@@ -44,10 +55,11 @@ header h1 span{color:var(--green)}
 .stat:nth-child(2)::before{background:var(--red)}
 .stat:nth-child(3)::before{background:var(--yellow)}
 .stat:nth-child(4)::before{background:var(--green)}
+.stat:nth-child(5)::before{background:#a371f7}
 .stat .icon{font-size:28px;margin-bottom:8px}
 .stat .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
 .stat .value{font-size:36px;font-weight:800;margin-top:4px;letter-spacing:-1px}
-.stat .value.green{color:var(--green)}.stat .value.red{color:var(--red)}.stat .value.yellow{color:var(--yellow)}.stat .value.blue{color:var(--blue)}
+.stat .value.green{color:var(--green)}.stat .value.red{color:var(--red)}.stat .value.yellow{color:var(--yellow)}.stat .value.blue{color:var(--blue)}.stat .value.purple{color:#a371f7}
 
 /* Input Area */
 .input-area{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:28px;box-shadow:var(--shadow);overflow:hidden}
@@ -67,13 +79,27 @@ header h1 span{color:var(--green)}
 .btn:active{transform:translateY(0)}
 .btn.secondary{background:var(--surface2);border:1px solid var(--border);color:var(--text)}
 .btn.secondary:hover{border-color:var(--border-hover);background:var(--border)}
-input[type=text]{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:13px;flex:1;min-width:200px;transition:var(--transition);font-family:var(--font)}
-input[type=text]:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+.btn.blue{background:var(--blue)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;filter:none}
+input[type=text],select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:9px 14px;font-size:13px;transition:var(--transition);font-family:var(--font)}
+input[type=text]{flex:1;min-width:200px}
+input[type=text]:focus,select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.15)}
+select{min-width:160px;cursor:pointer}
+.divider{width:1px;height:28px;background:var(--border);margin:0 4px}
+
+/* Tabs */
+.mode-tabs{display:flex;gap:0;margin-bottom:12px;border-bottom:2px solid var(--border);padding-bottom:0}
+.mode-tab{padding:8px 16px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:var(--transition)}
+.mode-tab:hover{color:var(--text)}
+.mode-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.mode-content{display:none}
+.mode-content.active{display:block}
 
 /* Section headers */
 .section-header{display:flex;align-items:center;gap:10px;margin-bottom:16px}
 .section-header h2{font-size:18px;font-weight:700}
 .section-header .badge{background:var(--surface2);border:1px solid var(--border);padding:2px 10px;border-radius:20px;font-size:12px;color:var(--muted);font-weight:600}
+.last-scan{font-size:12px;color:var(--muted);margin-left:auto}
 
 /* Table */
 .table-wrap{border-radius:var(--radius);border:1px solid var(--border);overflow:auto;box-shadow:var(--shadow);margin-bottom:32px}
@@ -101,6 +127,11 @@ tbody tr:last-child td{border-bottom:none}
 .risk-medium{background:var(--yellow-bg);color:var(--yellow)}
 .risk-high{background:var(--red-bg);color:var(--red)}
 
+/* Badges */
+.badge-pill{display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;text-transform:uppercase}
+.badge-draft{background:var(--yellow-bg);color:var(--yellow)}
+.badge-open{background:var(--green-bg);color:var(--green)}
+
 /* Spam badge */
 .spam{color:var(--red);font-weight:700;display:inline-flex;align-items:center;gap:4px}
 .no-spam{color:var(--green);font-weight:600}
@@ -126,6 +157,10 @@ tbody tr:last-child td{border-bottom:none}
 
 .empty{text-align:center;color:var(--muted);padding:48px;font-size:14px}
 #sections{display:none}
+
+/* Spinner */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* Footer */
 footer{text-align:center;padding:24px;color:var(--muted);font-size:13px;border-top:1px solid var(--border);margin-top:auto}
@@ -158,21 +193,53 @@ footer a:hover{text-decoration:underline}
       <img src="logo.png" alt="Treliq" onerror="this.style.display='none'">
       <h1>Dashboard</h1>
     </div>
-    <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+    <div class="header-right">
+      <span class="conn-status disconnected" id="connStatus">Offline</span>
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+    </div>
   </header>
+
+  <!-- Toast container for real-time notifications -->
+  <div class="toast-container" id="toastContainer"></div>
 
   <div class="input-area">
     <div class="input-header" onclick="toggleInput()">
       <h3>📥 Load Scan Results <span class="chevron" id="inputChevron">▼</span></h3>
     </div>
     <div class="input-body" id="inputBody">
-      <div class="actions" style="margin-top:0;margin-bottom:12px">
-        <input type="text" id="urlInput" placeholder="URL to JSON (e.g. demo.json)">
-        <button class="btn" onclick="loadFromUrl()">⬇ Load URL</button>
-        <button class="btn secondary" onclick="loadDemo()">📋 Demo</button>
+      <!-- Mode tabs -->
+      <div class="mode-tabs">
+        <div class="mode-tab active" onclick="switchMode('json')" data-mode="json">JSON / URL</div>
+        <div class="mode-tab" onclick="switchMode('api')" data-mode="api">Server API</div>
       </div>
-      <textarea id="jsonInput" placeholder='Paste treliq scan JSON here...'></textarea>
-      <div class="actions"><button class="btn" onclick="loadFromText()">Parse JSON</button></div>
+
+      <!-- JSON / URL mode -->
+      <div class="mode-content active" id="mode-json">
+        <div class="actions" style="margin-top:12px;margin-bottom:12px">
+          <input type="text" id="urlInput" placeholder="URL to JSON (e.g. demo.json)">
+          <button class="btn" onclick="loadFromUrl()">Load URL</button>
+          <button class="btn secondary" onclick="loadDemo()">Demo</button>
+        </div>
+        <textarea id="jsonInput" placeholder='Paste treliq scan JSON here...'></textarea>
+        <div class="actions"><button class="btn" onclick="loadFromText()">Parse JSON</button></div>
+      </div>
+
+      <!-- Server API mode -->
+      <div class="mode-content" id="mode-api">
+        <div class="actions" style="margin-top:12px;margin-bottom:12px">
+          <input type="text" id="serverUrl" placeholder="Server URL (e.g. http://localhost:3000)" value="">
+          <button class="btn blue" onclick="connectToServer()" id="connectBtn">Connect</button>
+        </div>
+        <div id="apiControls" style="display:none">
+          <div class="actions" style="margin-top:0">
+            <select id="repoSelect" onchange="loadRepoPRs()">
+              <option value="">Select repository...</option>
+            </select>
+            <button class="btn" onclick="triggerScan()" id="scanBtn">Scan Now</button>
+            <span class="last-scan" id="lastScanTime"></span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -182,11 +249,13 @@ footer a:hover{text-decoration:underline}
       <div class="stat"><div class="icon">🚩</div><div class="label">Spam Detected</div><div class="value red" id="spamCount">0</div></div>
       <div class="stat"><div class="icon">🔗</div><div class="label">Duplicate Clusters</div><div class="value yellow" id="dupCount">0</div></div>
       <div class="stat"><div class="icon">⭐</div><div class="label">Avg Score</div><div class="value green" id="avgScore">0</div></div>
+      <div class="stat"><div class="icon">📝</div><div class="label">Drafts</div><div class="value purple" id="draftCount">0</div></div>
     </div>
 
     <div class="section-header">
       <h2>Pull Requests</h2>
       <span class="badge" id="prBadge">0</span>
+      <span class="last-scan" id="headerScanTime"></span>
     </div>
     <div class="table-wrap">
     <table id="prTable">
@@ -195,10 +264,13 @@ footer a:hover{text-decoration:underline}
         <th data-col="totalScore">Score <span class="arrow"></span></th>
         <th data-col="title">Title <span class="arrow"></span></th>
         <th data-col="author">Author <span class="arrow"></span></th>
+        <th data-col="isDraft">Draft <span class="arrow"></span></th>
         <th data-col="filesChanged">Files <span class="arrow"></span></th>
         <th data-col="isSpam">Spam <span class="arrow"></span></th>
         <th data-col="ageInDays">Age <span class="arrow"></span></th>
         <th data-col="mergeable">Conflict <span class="arrow"></span></th>
+        <th data-col="milestone">Milestone <span class="arrow"></span></th>
+        <th data-col="requestedReviewers">Reviewers <span class="arrow"></span></th>
         <th data-col="llmRisk">LLM Risk <span class="arrow"></span></th>
         <th data-col="visionScore">Vision <span class="arrow"></span></th>
       </tr></thead>
@@ -218,13 +290,14 @@ footer a:hover{text-decoration:underline}
 
 <footer>
   Powered by <strong>Treliq</strong> — AI PR Triage &nbsp;·&nbsp;
-  <a href="https://github.com/mahsumurebe/treliq" target="_blank">GitHub</a>
+  <a href="https://github.com/mahsumaktas/treliq" target="_blank">GitHub</a>
 </footer>
 
 <script>
 let data=null,sortCol='totalScore',sortAsc=false,inputOpen=true;
+let apiBaseUrl=null,eventSource=null,currentRepo=null;
 
-// Theme
+// ========== Theme ==========
 function toggleTheme(){
   const html=document.documentElement;
   const next=html.dataset.theme==='dark'?'light':'dark';
@@ -237,13 +310,22 @@ function toggleTheme(){
   if(saved){document.documentElement.dataset.theme=saved;document.querySelector('.theme-toggle').textContent=saved==='dark'?'🌙':'☀️';}
 })();
 
-// Input toggle
+// ========== Toast Notifications ==========
+function showToast(msg, type='success'){
+  const container=document.getElementById('toastContainer');
+  const el=document.createElement('div');
+  el.className='toast'+(type==='error'?' error':'');
+  el.innerHTML=`${type==='error'?'❌':'🔔'} ${msg}`;
+  container.appendChild(el);
+  setTimeout(()=>{el.style.animation='slideOut .3s ease forwards';setTimeout(()=>el.remove(),300);},4000);
+}
+
+// ========== Input Toggle ==========
 function toggleInput(){
   inputOpen=!inputOpen;
   document.getElementById('inputBody').classList.toggle('open',inputOpen);
   document.getElementById('inputChevron').classList.toggle('open',inputOpen);
 }
-// Start open
 document.getElementById('inputBody').classList.add('open');
 document.getElementById('inputChevron').classList.add('open');
 
@@ -253,6 +335,199 @@ function collapseInput(){
   document.getElementById('inputChevron').classList.remove('open');
 }
 
+// ========== Mode Tabs ==========
+function switchMode(mode){
+  document.querySelectorAll('.mode-tab').forEach(t=>t.classList.toggle('active',t.dataset.mode===mode));
+  document.querySelectorAll('.mode-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById('mode-'+mode).classList.add('active');
+}
+
+// ========== Server API Mode ==========
+async function connectToServer(){
+  let url=document.getElementById('serverUrl').value.trim();
+  if(!url) url=window.location.origin;
+  url=url.replace(/\/$/,'');
+
+  const btn=document.getElementById('connectBtn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Connecting...';
+
+  try{
+    const r=await fetch(url+'/health');
+    if(!r.ok) throw new Error('Server not reachable');
+    const h=await r.json();
+    apiBaseUrl=url;
+    updateConnStatus(true);
+    showToast('Connected to server');
+
+    // Load repos
+    const reposR=await fetch(url+'/api/repos');
+    const reposData=await reposR.json();
+    const select=document.getElementById('repoSelect');
+    select.innerHTML='<option value="">Select repository...</option>';
+    (reposData.repos||[]).forEach(repo=>{
+      const opt=document.createElement('option');
+      opt.value=`${repo.owner}/${repo.name}`;
+      opt.textContent=`${repo.owner}/${repo.name}`;
+      select.appendChild(opt);
+    });
+
+    document.getElementById('apiControls').style.display='block';
+
+    // Connect SSE
+    connectSSE(url);
+  }catch(e){
+    showToast('Connection failed: '+e.message,'error');
+    updateConnStatus(false);
+  }finally{
+    btn.disabled=false;btn.textContent='Connect';
+  }
+}
+
+function updateConnStatus(connected){
+  const el=document.getElementById('connStatus');
+  if(connected){
+    el.className='conn-status connected';
+    el.innerHTML='&#9679; Live';
+  }else{
+    el.className='conn-status disconnected';
+    el.textContent='Offline';
+  }
+}
+
+async function loadRepoPRs(){
+  const repoFull=document.getElementById('repoSelect').value;
+  if(!repoFull||!apiBaseUrl) return;
+  currentRepo=repoFull;
+  const [owner,repo]=repoFull.split('/');
+
+  try{
+    const r=await fetch(`${apiBaseUrl}/api/repos/${owner}/${repo}/prs?limit=500&sortBy=total_score DESC`);
+    const result=await r.json();
+
+    // Map API response to dashboard format
+    data={
+      repo:repoFull,
+      totalPRs:result.total||result.prs?.length||0,
+      spamCount:(result.prs||[]).filter(p=>p.is_spam).length,
+      duplicateClusters:[],
+      rankedPRs:(result.prs||[]).map(mapAPIPR),
+    };
+    render();
+    collapseInput();
+    updateLastScan();
+  }catch(e){
+    showToast('Failed to load PRs: '+e.message,'error');
+  }
+}
+
+function mapAPIPR(p){
+  return{
+    number:p.pr_number||p.number,
+    title:p.title||'',
+    author:p.author||'',
+    totalScore:p.total_score||p.totalScore||0,
+    isSpam:p.is_spam||p.isSpam||false,
+    isDraft:p.is_draft||p.isDraft||false,
+    filesChanged:p.files_changed||p.filesChanged||0,
+    ageInDays:p.age_days||p.ageInDays,
+    mergeable:p.mergeable||'',
+    milestone:p.milestone||'',
+    requestedReviewers:p.requested_reviewers||p.requestedReviewers||0,
+    llmScore:p.llm_score||p.llmScore,
+    visionScore:p.vision_score||p.visionScore,
+    visionAlignment:p.vision_alignment||p.visionAlignment||'unchecked',
+    changedFiles:p.changed_files||p.changedFiles||[],
+    body:p.body||'',
+  };
+}
+
+async function triggerScan(){
+  if(!apiBaseUrl||!currentRepo) return;
+  const [owner,repo]=currentRepo.split('/');
+  const btn=document.getElementById('scanBtn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Scanning...';
+
+  try{
+    const r=await fetch(`${apiBaseUrl}/api/repos/${owner}/${repo}/scan`,{method:'POST'});
+    if(!r.ok) throw new Error('Scan failed');
+    const result=await r.json();
+    data=result;
+    // Re-map if needed (scan returns native format)
+    if(data.rankedPRs){
+      render();
+    }else{
+      await loadRepoPRs();
+    }
+    showToast(`Scan complete: ${result.totalPRs||0} PRs scored`);
+    updateLastScan();
+  }catch(e){
+    showToast('Scan failed: '+e.message,'error');
+  }finally{
+    btn.disabled=false;btn.textContent='Scan Now';
+  }
+}
+
+function updateLastScan(){
+  const ts=new Date().toLocaleTimeString();
+  document.getElementById('lastScanTime').textContent='Last: '+ts;
+  document.getElementById('headerScanTime').textContent='Last scan: '+ts;
+}
+
+// ========== SSE (Server-Sent Events) ==========
+function connectSSE(url){
+  if(eventSource){eventSource.close();}
+  eventSource=new EventSource(url+'/api/events');
+
+  eventSource.addEventListener('connected',()=>{
+    console.log('SSE connected');
+  });
+
+  eventSource.addEventListener('scan_complete',(e)=>{
+    const d=JSON.parse(e.data);
+    showToast(`Scan complete for ${d.repo}: ${d.totalPRs} PRs`);
+    // Auto-refresh if we're viewing this repo
+    if(currentRepo===d.repo){
+      loadRepoPRs();
+    }
+    updateLastScan();
+  });
+
+  eventSource.addEventListener('scan_start',(e)=>{
+    const d=JSON.parse(e.data);
+    showToast(`Scan started for ${d.repo}...`);
+  });
+
+  eventSource.addEventListener('pr_scored',(e)=>{
+    const d=JSON.parse(e.data);
+    showToast(`PR #${d.prNumber} scored: ${d.totalScore}/100${d.isSpam?' (Spam)':''}`);
+    // Auto-refresh if we're viewing this repo
+    if(currentRepo===d.repo){
+      loadRepoPRs();
+    }
+  });
+
+  eventSource.addEventListener('pr_closed',(e)=>{
+    const d=JSON.parse(e.data);
+    showToast(`PR #${d.prNumber} ${d.state}`);
+    if(currentRepo===d.repo){
+      loadRepoPRs();
+    }
+  });
+
+  eventSource.onerror=()=>{
+    updateConnStatus(false);
+    // Auto-reconnect after 5s
+    setTimeout(()=>{
+      if(apiBaseUrl) connectSSE(apiBaseUrl);
+    },5000);
+  };
+
+  eventSource.onopen=()=>{
+    updateConnStatus(true);
+  };
+}
+
+// ========== Helpers ==========
 function getLLMRisk(score){
   if(score==null) return {level:'N/A',cls:''};
   if(score>=70) return {level:'Low',cls:'risk-low'};
@@ -260,6 +535,7 @@ function getLLMRisk(score){
   return {level:'High',cls:'risk-high'};
 }
 
+// ========== Render ==========
 function render(){
   if(!data)return;
   document.getElementById('sections').style.display='block';
@@ -271,6 +547,8 @@ function render(){
   document.getElementById('clusterBadge').textContent=data.duplicateClusters?.length||0;
   const avg=prs.length?Math.round(prs.reduce((s,p)=>s+p.totalScore,0)/prs.length):0;
   document.getElementById('avgScore').textContent=avg;
+  const draftCount=prs.filter(p=>p.isDraft).length;
+  document.getElementById('draftCount').textContent=draftCount;
 
   // Update sort indicators
   document.querySelectorAll('#prTable th').forEach(th=>{
@@ -293,15 +571,19 @@ function render(){
   tbody.innerHTML=sorted.map(pr=>{
     const c=pr.totalScore>=70?'var(--green)':pr.totalScore>=40?'var(--yellow)':'var(--red)';
     const risk=getLLMRisk(pr.llmScore);
+    const reviewerCount=typeof pr.requestedReviewers==='number'?pr.requestedReviewers:(Array.isArray(pr.requestedReviewers)?pr.requestedReviewers.length:0);
     return `<tr>
       <td><a class="pr-link" href="https://github.com/${repo}/pull/${pr.number}" target="_blank">#${pr.number}</a></td>
       <td><span class="score-pill"><span class="bar" style="background:${c};width:${Math.max(pr.totalScore*.5,4)}px"></span><span class="num">${pr.totalScore}</span></span></td>
       <td title="${(pr.title||'').replace(/"/g,'&quot;')}" style="max-width:320px;overflow:hidden;text-overflow:ellipsis">${(pr.title||'').slice(0,65)}</td>
       <td style="color:var(--muted)">@${pr.author||''}</td>
+      <td>${pr.isDraft?'<span class="badge-pill badge-draft">Draft</span>':''}</td>
       <td>${pr.filesChanged||0}</td>
-      <td>${pr.isSpam?'<span class="spam">🚩 Spam</span>':'<span class="no-spam">✓ Clean</span>'}</td>
+      <td>${pr.isSpam?'<span class="spam">🚩 Spam</span>':'<span class="no-spam">✓</span>'}</td>
       <td>${pr.ageInDays!=null?pr.ageInDays+'d':'—'}</td>
       <td>${pr.mergeable==='conflicting'?'<span class="spam">⚠️ Conflict</span>':(pr.mergeable==='mergeable'?'<span class="no-spam">✓</span>':(pr.mergeable||'—'))}</td>
+      <td style="color:var(--muted)">${pr.milestone||'—'}</td>
+      <td>${reviewerCount>0?'<span style="color:var(--blue);font-weight:700">'+reviewerCount+'</span>':'—'}</td>
       <td>${risk.cls?`<span class="risk-pill ${risk.cls}">${risk.level}</span>`:risk.level}</td>
       <td>${pr.visionAlignment==='unchecked'?'N/A':(pr.visionScore!=null?pr.visionScore:'—')}</td>
     </tr>`;
@@ -329,6 +611,7 @@ function render(){
   </div>`).join('');
 }
 
+// ========== Table Sort ==========
 document.querySelectorAll('#prTable th').forEach(th=>{
   th.addEventListener('click',()=>{
     const col=th.dataset.col;
@@ -337,6 +620,7 @@ document.querySelectorAll('#prTable th').forEach(th=>{
   });
 });
 
+// ========== JSON/URL Load ==========
 function loadFromText(){
   try{data=JSON.parse(document.getElementById('jsonInput').value);render();collapseInput();}
   catch(e){alert('Invalid JSON: '+e.message);}
@@ -354,8 +638,24 @@ function loadDemo(){
   loadFromUrl();
 }
 
-// Auto-load demo.json
-fetch('demo.json').then(r=>r.ok?r.json():null).then(d=>{if(d){data=d;render();collapseInput();}}).catch(()=>{});
+// ========== Auto-connect ==========
+(function(){
+  // If served from Treliq server, auto-connect
+  if(window.location.pathname==='/'||window.location.pathname==='/index.html'){
+    fetch(window.location.origin+'/health')
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{
+        if(d&&d.status==='ok'){
+          document.getElementById('serverUrl').value=window.location.origin;
+          switchMode('api');
+          connectToServer();
+        }
+      })
+      .catch(()=>{});
+  }
+  // Fallback: try loading demo.json
+  fetch('demo.json').then(r=>r.ok?r.json():null).then(d=>{if(d&&!data){data=d;render();collapseInput();}}).catch(()=>{});
+})();
 </script>
 </body>
 </html>

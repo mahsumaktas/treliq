@@ -18,6 +18,7 @@ export interface TreliqConfig {
   trustContributors: boolean; // Exempt known contributors from spam detection
   useCache: boolean;           // Use incremental cache (default: true)
   cacheFile: string;           // Cache file path (default: '.treliq-cache.json')
+  dbPath?: string;             // SQLite database path (undefined = no DB)
 }
 
 export interface PRData {
@@ -47,6 +48,10 @@ export interface PRData {
   reviewState: 'approved' | 'changes_requested' | 'commented' | 'none';
   reviewCount: number;
   commentCount: number;
+  isDraft: boolean;
+  milestone?: string;
+  requestedReviewers: string[];
+  codeowners: string[];
 }
 
 export interface SignalScore {

@@ -4,19 +4,45 @@
 
 import type { PRData, ScoredPR, SignalScore } from './types';
 import type { LLMProvider } from './provider';
+import { ConcurrencyController } from './concurrency';
 
 export class ScoringEngine {
   private provider?: LLMProvider;
   private trustContributors: boolean;
   private reputationScores = new Map<string, number>();
+  private concurrency: ConcurrencyController;
 
-  constructor(provider?: LLMProvider, trustContributors = false) {
+  constructor(provider?: LLMProvider, trustContributors = false, maxConcurrent = 5) {
     this.provider = provider;
     this.trustContributors = trustContributors;
+    this.concurrency = new ConcurrencyController(maxConcurrent);
   }
 
   setReputation(login: string, score: number) {
     this.reputationScores.set(login, score);
+  }
+
+  /** Score multiple PRs in parallel with concurrency control */
+  async scoreMany(prs: PRData[]): Promise<ScoredPR[]> {
+    if (prs.length === 0) return [];
+    console.error(`📊 Scoring ${prs.length} PRs (max ${5} concurrent)...`);
+
+    const results = await Promise.allSettled(
+      prs.map(pr => this.concurrency.execute(() => this.score(pr)))
+    );
+
+    const scored: ScoredPR[] = [];
+    let failed = 0;
+    for (const [i, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        scored.push(result.value);
+      } else {
+        failed++;
+        console.warn(`⚠️  Failed to score PR #${prs[i].number}: ${result.reason}`);
+      }
+    }
+    if (failed > 0) console.error(`⚠️  ${failed}/${prs.length} PRs failed to score`);
+    return scored;
   }
 
   async score(pr: PRData): Promise<ScoredPR> {
@@ -34,6 +60,11 @@ export class ScoringEngine {
       this.scoreBodyQuality(pr),
       this.scoreActivity(pr),
       this.scoreBreakingChange(pr),
+      this.scoreDraftStatus(pr),
+      this.scoreMilestone(pr),
+      this.scoreLabelPriority(pr),
+      this.scoreCodeowners(pr),
+      this.scoreRequestedReviewers(pr),
     ];
 
     const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
@@ -100,9 +131,11 @@ export class ScoringEngine {
     }
   }
 
+  // --- Original 13 signals (weights adjusted for 18-signal total) ---
+
   private scoreCI(pr: PRData): SignalScore {
     const scoreMap = { success: 100, pending: 50, failure: 10, unknown: 40 };
-    return { name: 'ci_status', score: scoreMap[pr.ciStatus], weight: 0.2, reason: `CI: ${pr.ciStatus}` };
+    return { name: 'ci_status', score: scoreMap[pr.ciStatus], weight: 0.15, reason: `CI: ${pr.ciStatus}` };
   }
 
   private scoreDiffSize(pr: PRData): SignalScore {
@@ -113,12 +146,12 @@ export class ScoringEngine {
     else if (total < 500) score = 100;
     else if (total < 2000) score = 60;
     else score = 30;
-    return { name: 'diff_size', score, weight: 0.1, reason: `${total} lines changed (${pr.additions}+/${pr.deletions}-)` };
+    return { name: 'diff_size', score, weight: 0.07, reason: `${total} lines changed (${pr.additions}+/${pr.deletions}-)` };
   }
 
   private scoreCommitQuality(pr: PRData): SignalScore {
     const conventional = /^(feat|fix|docs|style|refactor|test|chore|ci|perf|build)(\(.+\))?:/.test(pr.title);
-    return { name: 'commit_quality', score: conventional ? 90 : 50, weight: 0.05, reason: conventional ? 'Conventional commit format' : 'Non-standard title' };
+    return { name: 'commit_quality', score: conventional ? 90 : 50, weight: 0.04, reason: conventional ? 'Conventional commit format' : 'Non-standard title' };
   }
 
   private scoreContributor(pr: PRData): SignalScore {
@@ -128,17 +161,16 @@ export class ScoringEngine {
     };
     let assocScore = trustMap[pr.authorAssociation] ?? 50;
     const repScore = this.reputationScores.get(pr.author);
-    // Blend: 70% association + 30% reputation if available
     const score = repScore !== undefined
       ? Math.round(0.7 * assocScore + 0.3 * repScore)
       : assocScore;
     const repInfo = repScore !== undefined ? `, rep: ${repScore}` : '';
-    return { name: 'contributor', score, weight: 0.15, reason: `${pr.author} (${pr.authorAssociation}${repInfo})` };
+    return { name: 'contributor', score, weight: 0.12, reason: `${pr.author} (${pr.authorAssociation}${repInfo})` };
   }
 
   private scoreIssueRef(pr: PRData): SignalScore {
     return {
-      name: 'issue_ref', score: pr.hasIssueRef ? 90 : 30, weight: 0.1,
+      name: 'issue_ref', score: pr.hasIssueRef ? 90 : 30, weight: 0.07,
       reason: pr.hasIssueRef ? `References: ${pr.issueNumbers.map(n => `#${n}`).join(', ')}` : 'No issue reference',
     };
   }
@@ -147,10 +179,9 @@ export class ScoringEngine {
     let spamScore = 0;
     const reasons: string[] = [];
 
-    // Known contributors: full exemption if --trust-contributors, otherwise -1 penalty reduction
     const knownContributor = ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR'].includes(pr.authorAssociation);
     if (knownContributor && this.trustContributors) {
-      return { name: 'spam', score: 100, weight: 0.15, reason: `Trusted contributor (${pr.authorAssociation})` };
+      return { name: 'spam', score: 100, weight: 0.12, reason: `Trusted contributor (${pr.authorAssociation})` };
     }
     let trustBonus = knownContributor ? -1 : 0;
 
@@ -160,23 +191,34 @@ export class ScoringEngine {
     if ((pr.body ?? '').length < 20) { spamScore++; reasons.push('No/short description'); }
     const docsOnly = pr.changedFiles.every(f => /readme|contributing|license|changelog|\.md$|\.txt$/i.test(f));
     if (docsOnly && pr.changedFiles.length > 0 && pr.additions + pr.deletions < 20) { spamScore++; reasons.push('Trivial docs-only change'); }
+
+    // Typo-fix spam pattern: many files, tiny changes, all docs
+    if (pr.changedFiles.length > 3 && pr.additions + pr.deletions < pr.changedFiles.length * 2 && docsOnly) {
+      spamScore++; reasons.push('Likely typo-fix spam');
+    }
+
+    // AI-generated language markers in body
+    const aiMarkers = [/certainly!/i, /as an ai/i, /i apologize/i, /here's the corrected/i, /i'd be happy to/i];
+    if (aiMarkers.some(p => p.test(pr.body ?? ''))) {
+      spamScore++; reasons.push('AI-generated language');
+    }
+
     spamScore = Math.max(0, spamScore + trustBonus);
     if (knownContributor && reasons.length > 0) reasons.push(`contributor bonus -1`);
-    return { name: 'spam', score: Math.max(0, 100 - spamScore * 25), weight: 0.15, reason: reasons.length > 0 ? reasons.join(', ') : 'No spam signals' };
+    return { name: 'spam', score: Math.max(0, 100 - spamScore * 20), weight: 0.12, reason: reasons.length > 0 ? reasons.join(', ') : 'No spam signals' };
   }
 
   private scoreTestCoverage(pr: PRData): SignalScore {
     if (pr.hasTests) {
-      return { name: 'test_coverage', score: 90, weight: 0.15, reason: `${pr.testFilesChanged.length} test file(s) changed` };
+      return { name: 'test_coverage', score: 90, weight: 0.12, reason: `${pr.testFilesChanged.length} test file(s) changed` };
     }
-    // Check if docs/config-only PR (tests not expected)
     const docsConfigOnly = pr.changedFiles.length > 0 && pr.changedFiles.every(f =>
       /\.(md|txt|json|ya?ml|toml|ini|cfg|conf|lock)$/i.test(f) || /readme|license|changelog|contributing|docs\//i.test(f)
     );
     if (docsConfigOnly) {
-      return { name: 'test_coverage', score: 60, weight: 0.15, reason: 'Docs/config PR — tests not expected' };
+      return { name: 'test_coverage', score: 60, weight: 0.12, reason: 'Docs/config PR — tests not expected' };
     }
-    return { name: 'test_coverage', score: 20, weight: 0.15, reason: 'No test files changed in code PR' };
+    return { name: 'test_coverage', score: 20, weight: 0.12, reason: 'No test files changed in code PR' };
   }
 
   private scoreStaleness(pr: PRData): SignalScore {
@@ -187,12 +229,12 @@ export class ScoringEngine {
     else if (days <= 30) { score = 70; label = 'Aging'; }
     else if (days <= 90) { score = 40; label = 'Stale'; }
     else { score = 15; label = 'Very stale'; }
-    return { name: 'staleness', score, weight: 0.1, reason: `${days}d old (${label})` };
+    return { name: 'staleness', score, weight: 0.07, reason: `${days}d old (${label})` };
   }
 
   private scoreMergeability(pr: PRData): SignalScore {
     const scoreMap = { mergeable: 100, unknown: 50, conflicting: 10 };
-    return { name: 'mergeability', score: scoreMap[pr.mergeable], weight: 0.15, reason: `Merge status: ${pr.mergeable}` };
+    return { name: 'mergeability', score: scoreMap[pr.mergeable], weight: 0.12, reason: `Merge status: ${pr.mergeable}` };
   }
 
   private scoreReviewStatus(pr: PRData): SignalScore {
@@ -201,7 +243,7 @@ export class ScoringEngine {
     };
     let score = stateScores[pr.reviewState] ?? 40;
     if (pr.reviewCount >= 2) score = Math.min(100, score + 10);
-    return { name: 'review_status', score, weight: 0.10, reason: `Review: ${pr.reviewState} (${pr.reviewCount} reviews)` };
+    return { name: 'review_status', score, weight: 0.08, reason: `Review: ${pr.reviewState} (${pr.reviewCount} reviews)` };
   }
 
   private scoreBodyQuality(pr: PRData): SignalScore {
@@ -213,7 +255,7 @@ export class ScoringEngine {
     else score = 20;
     if (/- \[[ x]\]/.test(pr.body ?? '')) score = Math.min(100, score + 10);
     if (/!\[/.test(pr.body ?? '')) score = Math.min(100, score + 10);
-    return { name: 'body_quality', score, weight: 0.05, reason: `Body: ${len} chars` };
+    return { name: 'body_quality', score, weight: 0.04, reason: `Body: ${len} chars` };
   }
 
   private scoreActivity(pr: PRData): SignalScore {
@@ -222,7 +264,7 @@ export class ScoringEngine {
     else if (pr.commentCount >= 2) score = 70;
     else if (pr.commentCount === 1) score = 50;
     else score = 30;
-    return { name: 'activity', score, weight: 0.05, reason: `${pr.commentCount} comments` };
+    return { name: 'activity', score, weight: 0.04, reason: `${pr.commentCount} comments` };
   }
 
   private scoreBreakingChange(pr: PRData): SignalScore {
@@ -248,8 +290,68 @@ export class ScoringEngine {
     return {
       name: 'breaking_change',
       score: breaking ? 40 : 80,
-      weight: 0.05,
+      weight: 0.04,
       reason: breaking ? reasons.join('; ') : 'No breaking change signals',
+    };
+  }
+
+  // --- New 5 signals (v0.4) ---
+
+  private scoreDraftStatus(pr: PRData): SignalScore {
+    return {
+      name: 'draft_status',
+      score: pr.isDraft ? 10 : 90,
+      weight: 0.08,
+      reason: pr.isDraft ? 'Draft PR (not ready for review)' : 'Ready for review',
+    };
+  }
+
+  private scoreMilestone(pr: PRData): SignalScore {
+    return {
+      name: 'milestone',
+      score: pr.milestone ? 90 : 40,
+      weight: 0.07,
+      reason: pr.milestone ? `Milestone: ${pr.milestone}` : 'No milestone attached',
+    };
+  }
+
+  private scoreLabelPriority(pr: PRData): SignalScore {
+    const highLabels = ['high-priority', 'urgent', 'critical', 'p0', 'p1', 'security', 'bug'];
+    const lowLabels = ['low-priority', 'backlog', 'nice-to-have', 'p3', 'p4', 'wontfix'];
+    const labels = pr.labels.map(l => l.toLowerCase());
+
+    if (labels.some(l => highLabels.some(h => l.includes(h)))) {
+      return { name: 'label_priority', score: 95, weight: 0.08, reason: `High priority labels: ${pr.labels.join(', ')}` };
+    }
+    if (labels.some(l => lowLabels.some(h => l.includes(h)))) {
+      return { name: 'label_priority', score: 30, weight: 0.08, reason: `Low priority labels: ${pr.labels.join(', ')}` };
+    }
+    return { name: 'label_priority', score: 50, weight: 0.05, reason: pr.labels.length > 0 ? `Labels: ${pr.labels.join(', ')}` : 'No priority labels' };
+  }
+
+  private scoreCodeowners(pr: PRData): SignalScore {
+    if (pr.codeowners.length === 0) {
+      return { name: 'codeowners', score: 40, weight: 0.05, reason: 'No CODEOWNERS match' };
+    }
+    const authorIsOwner = pr.codeowners.includes(pr.author);
+    return {
+      name: 'codeowners',
+      score: authorIsOwner ? 95 : 60,
+      weight: 0.10,
+      reason: authorIsOwner
+        ? `Author owns ${pr.codeowners.length} matched pattern(s)`
+        : `${pr.codeowners.join(', ')} own affected files`,
+    };
+  }
+
+  private scoreRequestedReviewers(pr: PRData): SignalScore {
+    return {
+      name: 'requested_reviewers',
+      score: pr.requestedReviewers.length > 0 ? 80 : 40,
+      weight: 0.05,
+      reason: pr.requestedReviewers.length > 0
+        ? `${pr.requestedReviewers.length} reviewer(s): ${pr.requestedReviewers.slice(0, 3).join(', ')}`
+        : 'No reviewers requested',
     };
   }
 }

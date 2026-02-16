@@ -1,19 +1,35 @@
 /**
- * DedupEngine — Semantic duplicate detection for PRs using Gemini embeddings + LanceDB
+ * DedupEngine — Semantic duplicate detection for PRs using embeddings
+ * Supports both brute-force O(n²) and LanceDB ANN O(n log n) modes.
  */
 
 import type { ScoredPR, DedupCluster } from './types';
 import type { LLMProvider } from './provider';
+import { VectorStore, type VectorRecord } from './vectorstore';
 
 export class DedupEngine {
   private duplicateThreshold: number;
   private relatedThreshold: number;
   private provider: LLMProvider;
+  private vectorStore?: VectorStore;
 
-  constructor(duplicateThreshold = 0.85, relatedThreshold = 0.80, provider: LLMProvider) {
+  constructor(
+    duplicateThreshold = 0.85,
+    relatedThreshold = 0.80,
+    provider: LLMProvider,
+    vectorStorePath?: string
+  ) {
     this.duplicateThreshold = duplicateThreshold;
     this.relatedThreshold = relatedThreshold;
     this.provider = provider;
+
+    if (vectorStorePath) {
+      this.vectorStore = new VectorStore();
+      this.vectorStore.connect(vectorStorePath).catch(err => {
+        console.error(`   ⚠️  Failed to connect VectorStore: ${err.message}`);
+        this.vectorStore = undefined;
+      });
+    }
   }
 
   async findDuplicates(prs: ScoredPR[]): Promise<DedupCluster[]> {
@@ -43,15 +59,27 @@ export class DedupEngine {
       }
     }
 
-    // 2. Pairwise cosine similarity (brute force for now, LanceDB later)
+    // 2. Find similar pairs — use VectorStore (ANN) or brute-force
     const embeddedPRs = prs.filter(p => p.embedding);
-    const pairs: Array<{ a: number; b: number; sim: number }> = [];
+    let pairs: Array<{ a: number; b: number; sim: number }>;
 
-    for (let i = 0; i < embeddedPRs.length; i++) {
-      for (let j = i + 1; j < embeddedPRs.length; j++) {
-        const sim = this.cosineSimilarity(embeddedPRs[i].embedding!, embeddedPRs[j].embedding!);
-        if (sim >= this.relatedThreshold) {
-          pairs.push({ a: embeddedPRs[i].number, b: embeddedPRs[j].number, sim });
+    if (this.vectorStore && embeddedPRs.length > 50) {
+      // Use LanceDB ANN for large sets (>50 PRs)
+      console.error(`   Using LanceDB ANN search for ${embeddedPRs.length} PRs...`);
+      const records: VectorRecord[] = embeddedPRs.map(pr => ({
+        prNumber: pr.number,
+        embedding: pr.embedding!,
+      }));
+      pairs = await this.vectorStore.findAllPairsAboveThreshold(records, this.relatedThreshold);
+    } else {
+      // Brute-force cosine similarity for small sets
+      pairs = [];
+      for (let i = 0; i < embeddedPRs.length; i++) {
+        for (let j = i + 1; j < embeddedPRs.length; j++) {
+          const sim = this.cosineSimilarity(embeddedPRs[i].embedding!, embeddedPRs[j].embedding!);
+          if (sim >= this.relatedThreshold) {
+            pairs.push({ a: embeddedPRs[i].number, b: embeddedPRs[j].number, sim });
+          }
         }
       }
     }

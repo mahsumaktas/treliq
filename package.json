@@ -1,6 +1,6 @@
 {
   "name": "treliq",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "AI-Powered PR Triage for Open Source Maintainers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -42,17 +42,24 @@
     "url": "https://github.com/mahsumaktas/treliq.git"
   },
   "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/static": "^9.0.0",
     "@lancedb/lancedb": "^0.15.0",
+    "@octokit/graphql": "^9.0.3",
     "@octokit/rest": "^21.0.0",
+    "@octokit/webhooks": "^14.2.0",
+    "better-sqlite3": "^11.0.0",
     "commander": "^12.0.0",
-    "better-sqlite3": "^11.0.0"
+    "fastify": "^5.7.4",
+    "node-cron": "^4.2.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
+    "@types/jest": "^29.0.0",
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0",
-    "ts-node": "^10.9.0",
+    "@types/node-cron": "^3.0.11",
     "jest": "^29.0.0",
-    "@types/jest": "^29.0.0"
+    "ts-node": "^10.9.0",
+    "typescript": "^5.7.0"
   }
 }

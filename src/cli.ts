@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
+import { createInterface } from 'readline';
+import { Octokit } from '@octokit/rest';
 import { TreliqScanner } from './core/scanner';
 import { ScoringEngine } from './core/scoring';
 import { DedupEngine } from './core/dedup';
@@ -22,6 +24,19 @@ interface CLIOpts {
   noCache?: boolean;
   cacheFile?: string;
   pr?: string;
+  dbPath?: string;
+  threshold?: string;
+  dryRun?: boolean;
+  message?: string;
+  high?: string;
+  medium?: string;
+  port?: string;
+  host?: string;
+  schedule?: string;
+  cron?: string;
+  webhookSecret?: string;
+  slackWebhook?: string;
+  discordWebhook?: string;
 }
 
 function resolveProvider(opts: CLIOpts): LLMProvider | undefined {
@@ -82,6 +97,7 @@ function makeConfig(opts: CLIOpts): TreliqConfig {
     trustContributors: opts.trustContributors ?? false,
     useCache: opts.noCache ? false : true,
     cacheFile: opts.cacheFile ?? '.treliq-cache.json',
+    dbPath: opts.dbPath,
   };
 }
 
@@ -182,7 +198,7 @@ function outputScoredPR(scored: ScoredPR, format: string) {
 program
   .name('treliq')
   .description('AI-Powered PR Triage for Open Source Maintainers')
-  .version('0.3.0');
+  .version('0.4.0');
 
 program
   .command('scan')
@@ -281,6 +297,242 @@ program
         }
         console.log();
       }
+    }
+  });
+
+program
+  .command('close-spam')
+  .description('Close PRs identified as spam')
+  .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
+  .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('--api-key <key>', 'API key for the selected provider')
+  .option('--threshold <score>', 'Score threshold for spam detection', '25')
+  .option('--dry-run', 'Preview only, do not close PRs', false)
+  .option('--message <text>', 'Custom close comment')
+  .action(async (opts: CLIOpts) => {
+    const config = makeConfig(opts);
+    if (!config.token) {
+      console.error('❌ GITHUB_TOKEN required.');
+      process.exit(1);
+    }
+
+    const threshold = parseInt(opts.threshold ?? '25', 10);
+    if (isNaN(threshold)) {
+      console.error('❌ Invalid threshold value.');
+      process.exit(1);
+    }
+
+    console.log(`🔍 Scanning for spam PRs (threshold: ${threshold})...`);
+    const scanner = new TreliqScanner(config);
+    const result = await scanner.scan();
+
+    const spamPRs = result.rankedPRs.filter(pr => pr.isSpam && pr.totalScore <= threshold);
+
+    if (spamPRs.length === 0) {
+      console.log('✅ No spam PRs found matching criteria.');
+      return;
+    }
+
+    console.log(`\n🚩 Found ${spamPRs.length} spam PRs:\n`);
+    for (const pr of spamPRs) {
+      console.log(`  #${pr.number} - ${pr.title} (score: ${pr.totalScore}, by @${pr.author})`);
+    }
+
+    if (opts.dryRun) {
+      console.log('\n🔍 Dry run complete. No PRs were closed.');
+      return;
+    }
+
+    // Prompt for confirmation
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const answer = await new Promise<string>(resolve => {
+      rl.question(`\n⚠️  Close ${spamPRs.length} spam PRs? (yes/no): `, resolve);
+    });
+    rl.close();
+
+    if (answer.toLowerCase() !== 'yes') {
+      console.log('❌ Operation cancelled.');
+      return;
+    }
+
+    const [owner, repo] = config.repo.split('/');
+    const octokit = new Octokit({ auth: config.token });
+    const closeMessage = opts.message || 'This PR has been automatically closed as it was identified as spam by Treliq.';
+
+    console.log('\n🔨 Closing spam PRs...');
+    for (const pr of spamPRs) {
+      try {
+        // Post comment
+        await octokit.issues.createComment({
+          owner,
+          repo,
+          issue_number: pr.number,
+          body: closeMessage,
+        });
+
+        // Close PR
+        await octokit.pulls.update({
+          owner,
+          repo,
+          pull_number: pr.number,
+          state: 'closed',
+        });
+
+        console.log(`  ✅ Closed #${pr.number}`);
+      } catch (error: any) {
+        console.error(`  ❌ Failed to close #${pr.number}: ${error.message}`);
+      }
+    }
+
+    console.log(`\n✅ Closed ${spamPRs.length} spam PRs.`);
+  });
+
+program
+  .command('label-by-score')
+  .description('Apply priority labels based on PR scores')
+  .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
+  .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('--api-key <key>', 'API key for the selected provider')
+  .option('--high <score>', 'High priority threshold', '80')
+  .option('--medium <score>', 'Medium priority threshold', '50')
+  .option('--dry-run', 'Preview only, do not apply labels', false)
+  .action(async (opts: CLIOpts) => {
+    const config = makeConfig(opts);
+    if (!config.token) {
+      console.error('❌ GITHUB_TOKEN required.');
+      process.exit(1);
+    }
+
+    const highThreshold = parseInt(opts.high ?? '80', 10);
+    const mediumThreshold = parseInt(opts.medium ?? '50', 10);
+
+    if (isNaN(highThreshold) || isNaN(mediumThreshold)) {
+      console.error('❌ Invalid threshold values.');
+      process.exit(1);
+    }
+
+    console.log(`🔍 Scanning and scoring PRs...`);
+    const scanner = new TreliqScanner(config);
+    const result = await scanner.scan();
+
+    const highPRs = result.rankedPRs.filter(pr => !pr.isSpam && pr.totalScore >= highThreshold);
+    const mediumPRs = result.rankedPRs.filter(pr => !pr.isSpam && pr.totalScore >= mediumThreshold && pr.totalScore < highThreshold);
+    const lowPRs = result.rankedPRs.filter(pr => !pr.isSpam && pr.totalScore < mediumThreshold);
+
+    console.log(`\n📊 Label Distribution:\n`);
+    console.log(`  🔴 High Priority (>=${highThreshold}): ${highPRs.length} PRs`);
+    console.log(`  🟡 Medium Priority (${mediumThreshold}-${highThreshold}): ${mediumPRs.length} PRs`);
+    console.log(`  🟢 Low Priority (<${mediumThreshold}): ${lowPRs.length} PRs`);
+
+    if (opts.dryRun) {
+      console.log('\n🔍 Dry run complete. No labels were applied.');
+      return;
+    }
+
+    const [owner, repo] = config.repo.split('/');
+    const octokit = new Octokit({ auth: config.token });
+
+    console.log('\n🏷️  Applying labels...');
+
+    const labelMap = [
+      { prs: highPRs, label: 'treliq:high-priority', emoji: '🔴' },
+      { prs: mediumPRs, label: 'treliq:medium-priority', emoji: '🟡' },
+      { prs: lowPRs, label: 'treliq:low-priority', emoji: '🟢' },
+    ];
+
+    for (const { prs, label, emoji } of labelMap) {
+      for (const pr of prs) {
+        try {
+          await octokit.issues.addLabels({
+            owner,
+            repo,
+            issue_number: pr.number,
+            labels: [label],
+          });
+          console.log(`  ${emoji} #${pr.number}: ${label}`);
+        } catch (error: any) {
+          console.error(`  ❌ Failed to label #${pr.number}: ${error.message}`);
+        }
+      }
+    }
+
+    console.log('\n✅ Labels applied successfully.');
+  });
+
+program
+  .command('server')
+  .description('Start Treliq server with web UI and scheduled scanning')
+  .option('--port <number>', 'Server port', '3000')
+  .option('--host <host>', 'Server host', '0.0.0.0')
+  .option('--db-path <path>', 'SQLite database path', './treliq.db')
+  .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('--api-key <key>', 'API key for the selected provider')
+  .option('--schedule <repos>', 'Comma-separated repos for hourly scanning')
+  .option('--cron <expression>', 'Custom cron expression', '0 * * * *')
+  .option('--webhook-secret <secret>', 'GitHub webhook secret')
+  .option('--slack-webhook <url>', 'Slack webhook URL')
+  .option('--discord-webhook <url>', 'Discord webhook URL')
+  .action(async (opts: CLIOpts) => {
+    const token = opts.token || process.env.GITHUB_TOKEN;
+    if (!token) {
+      console.error('❌ GITHUB_TOKEN required for server mode.');
+      process.exit(1);
+    }
+
+    const port = parseInt(opts.port ?? '3000', 10);
+    const host = opts.host ?? '0.0.0.0';
+    const dbPath = opts.dbPath ?? './treliq.db';
+    const provider = resolveProvider(opts);
+
+    const scheduledRepos = opts.schedule?.split(',').map(r => r.trim()).filter(Boolean) || [];
+    const cronExpression = opts.cron ?? '0 * * * *';
+
+    const serverConfig = {
+      port,
+      host,
+      dbPath,
+      treliqConfig: {
+        repo: scheduledRepos[0] ?? '',
+        token,
+        provider,
+        duplicateThreshold: 0.85,
+        relatedThreshold: 0.80,
+        maxPRs: 500,
+        outputFormat: 'json' as const,
+        comment: false,
+        trustContributors: false,
+        useCache: true,
+        cacheFile: '.treliq-cache.json',
+        dbPath,
+      },
+      webhookSecret: opts.webhookSecret,
+      scheduledRepos,
+      cronExpression,
+      slackWebhook: opts.slackWebhook,
+      discordWebhook: opts.discordWebhook,
+    };
+
+    console.log(`🚀 Starting Treliq server on ${host}:${port}...`);
+    console.log(`   Database: ${dbPath}`);
+    if (scheduledRepos.length > 0) {
+      console.log(`   Scheduled repos: ${scheduledRepos.join(', ')}`);
+      console.log(`   Cron: ${cronExpression}`);
+    }
+
+    try {
+      // Dynamic import to avoid loading heavy dependencies for CLI-only users
+      const { startServer } = await import('./server');
+      await startServer(serverConfig);
+    } catch (error: any) {
+      console.error(`❌ Failed to start server: ${error.message}`);
+      process.exit(1);
     }
   });
 
