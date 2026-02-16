@@ -16,3 +16,5 @@ export { ScoringEngine } from './core/scoring';
 export { VisionChecker } from './core/vision';
 export type { PRData, ScoredPR, DedupCluster, TreliqConfig } from './core/types';
 export { loadCache, saveCache } from './core/cache';
+export { createProvider, GeminiProvider, OpenAIProvider, AnthropicProvider } from './core/provider';
+export type { LLMProvider, ProviderName } from './core/provider';

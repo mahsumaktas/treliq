@@ -57,9 +57,26 @@ npx treliq dedup -r owner/repo
 npx treliq scan -r owner/repo --trust-contributors
 ```
 
-**Required env vars:**
-- `GITHUB_TOKEN` — GitHub personal access token
-- `GEMINI_API_KEY` — From [Google AI Studio](https://aistudio.google.com/apikey)
+**Multi-Provider Support:**
+
+```bash
+# Use OpenAI instead of Gemini
+npx treliq scan -r owner/repo -p openai --api-key sk-...
+
+# Use Anthropic (needs GEMINI_API_KEY or OPENAI_API_KEY for embeddings)
+npx treliq scan -r owner/repo -p anthropic --api-key sk-ant-...
+```
+
+**Environment Variables:**
+
+| Variable | Provider | Required For |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | GitHub | All commands |
+| `GEMINI_API_KEY` | Gemini (default) | LLM scoring, embeddings, vision |
+| `OPENAI_API_KEY` | OpenAI | LLM scoring, embeddings |
+| `ANTHROPIC_API_KEY` | Anthropic | LLM scoring (embeddings via fallback) |
+
+> **Note:** Anthropic doesn't support embeddings natively. When using `--provider anthropic`, Treliq automatically falls back to Gemini or OpenAI for embeddings if their API keys are available.
 
 ## GitHub Action Setup
 

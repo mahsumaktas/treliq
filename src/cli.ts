@@ -5,13 +5,38 @@ import { TreliqScanner } from './core/scanner';
 import { ScoringEngine } from './core/scoring';
 import { DedupEngine } from './core/dedup';
 import type { TreliqConfig, TreliqResult, ScoredPR } from './core/types';
+import { createProvider, type LLMProvider, type ProviderName } from './core/provider';
 
 const program = new Command();
 
+function resolveProvider(opts: any): LLMProvider | undefined {
+  const providerName: ProviderName = opts.provider ?? 'gemini';
+  const envKeyMap: Record<ProviderName, string> = {
+    gemini: 'GEMINI_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    anthropic: 'ANTHROPIC_API_KEY',
+  };
+  const apiKey = opts.apiKey || process.env[envKeyMap[providerName]];
+  if (!apiKey) return undefined;
+
+  // For Anthropic, create a Gemini fallback for embeddings if available
+  let embeddingFallback: LLMProvider | undefined;
+  if (providerName === 'anthropic') {
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (geminiKey) embeddingFallback = createProvider('gemini', geminiKey);
+    else if (openaiKey) embeddingFallback = createProvider('openai', openaiKey);
+  }
+
+  return createProvider(providerName, apiKey, embeddingFallback);
+}
+
 function makeConfig(opts: any): TreliqConfig {
+  const provider = resolveProvider(opts);
   return {
     repo: opts.repo,
     token: opts.token || process.env.GITHUB_TOKEN || '',
+    provider,
     geminiApiKey: opts.geminiKey || process.env.GEMINI_API_KEY,
     duplicateThreshold: 0.85,
     relatedThreshold: 0.80,
@@ -99,6 +124,8 @@ program
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
   .option('-k, --gemini-key <key>', 'Gemini API key (or GEMINI_API_KEY env)')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('--api-key <key>', 'API key for the selected provider')
   .option('-f, --format <format>', 'Output format: table|json|markdown', 'table')
   .option('-m, --max <number>', 'Max PRs to scan', '500')
   .option('--comment', 'Post results as PR comments', false)
@@ -122,6 +149,8 @@ program
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .requiredOption('-n, --pr <number>', 'PR number')
   .option('-t, --token <token>', 'GitHub token')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('--api-key <key>', 'API key for the selected provider')
   .option('-f, --format <format>', 'Output format', 'table')
   .action(async (opts) => {
     const config = makeConfig(opts);
@@ -195,7 +224,7 @@ program
       commentCount: pr.comments ?? 0,
     };
 
-    const engine = new ScoringEngine(config.geminiApiKey, config.trustContributors);
+    const engine = new ScoringEngine(config.provider, config.trustContributors);
     const scored = await engine.score(prData);
 
     if (opts.format === 'json') {
@@ -233,21 +262,23 @@ program
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token')
   .option('-k, --gemini-key <key>', 'Gemini API key')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('--api-key <key>', 'API key for the selected provider')
   .option('-f, --format <format>', 'Output format', 'table')
   .option('-m, --max <number>', 'Max PRs', '500')
   .action(async (opts) => {
     const config = makeConfig(opts);
     if (!config.token) { console.error('❌ GITHUB_TOKEN required.'); process.exit(1); }
-    if (!config.geminiApiKey) { console.error('❌ GEMINI_API_KEY required for dedup.'); process.exit(1); }
+    if (!config.provider) { console.error('❌ API key required for dedup. Set via --api-key or env var.'); process.exit(1); }
 
     const scanner = new TreliqScanner(config);
     const prs = await scanner.fetchPRs();
     console.log(`📊 Scoring ${prs.length} PRs...`);
-    const engine = new ScoringEngine(config.geminiApiKey, config.trustContributors);
+    const engine = new ScoringEngine(config.provider, config.trustContributors);
     const scored: ScoredPR[] = [];
     for (const pr of prs) scored.push(await engine.score(pr));
 
-    const dedup = new DedupEngine(config.duplicateThreshold, config.relatedThreshold, config.geminiApiKey);
+    const dedup = new DedupEngine(config.duplicateThreshold, config.relatedThreshold, config.provider);
     const clusters = await dedup.findDuplicates(scored);
 
     if (opts.format === 'json') {

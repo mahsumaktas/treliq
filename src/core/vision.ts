@@ -3,18 +3,15 @@
  */
 
 import type { ScoredPR } from './types';
-
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
-
-async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+import type { LLMProvider } from './provider';
 
 export class VisionChecker {
   private visionDoc: string;
-  private geminiApiKey: string;
+  private provider: LLMProvider;
 
-  constructor(visionDoc: string, geminiApiKey?: string) {
+  constructor(visionDoc: string, provider: LLMProvider) {
     this.visionDoc = visionDoc;
-    this.geminiApiKey = geminiApiKey ?? process.env.GEMINI_API_KEY ?? '';
+    this.provider = provider;
   }
 
   async check(pr: ScoredPR): Promise<{
@@ -22,8 +19,6 @@ export class VisionChecker {
     score: number;
     reason: string;
   }> {
-    await sleep(100); // Rate limiting
-
     const prompt = `Given this project vision:
 ${this.visionDoc.slice(0, 3000)}
 
@@ -34,21 +29,7 @@ PR Body: ${(pr.body ?? '').slice(0, 2000)}
 Respond with EXACTLY one JSON object (no markdown):
 {"score": <0-100>, "alignment": "aligned"|"tangential"|"off-roadmap", "reason": "one sentence"}`;
 
-    const res = await fetch(`${GEMINI_URL}?key=${this.geminiApiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 200 },
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Gemini API error: ${res.status}`);
-    }
-
-    const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const text = await this.provider.generateText(prompt, { temperature: 0.1, maxTokens: 200 });
 
     try {
       const match = text.match(/\{[^}]+\}/);

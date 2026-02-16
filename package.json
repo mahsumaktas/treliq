@@ -30,7 +30,10 @@
     "typescript",
     "pull-request",
     "open-source",
-    "gemini"
+    "gemini",
+    "openai",
+    "anthropic",
+    "multi-provider"
   ],
   "author": "Mahsum Aktaş <mahsum@mahsumaktas.com>",
   "license": "MIT",

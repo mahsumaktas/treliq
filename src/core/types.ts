@@ -2,10 +2,13 @@
  * Core type definitions for Treliq
  */
 
+import type { LLMProvider } from './provider';
+
 export interface TreliqConfig {
   repo: string;               // owner/repo
   token: string;              // GitHub token
-  geminiApiKey?: string;      // Gemini API key for embeddings + review
+  provider?: LLMProvider;     // LLM provider for scoring, dedup, vision
+  geminiApiKey?: string;      // @deprecated — use provider instead
   visionDocPath?: string;     // Path to VISION.md or ROADMAP.md
   duplicateThreshold: number; // Default: 0.85
   relatedThreshold: number;   // Default: 0.80

@@ -3,18 +3,15 @@
  */
 
 import type { PRData, ScoredPR, SignalScore } from './types';
-
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
-
-async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+import type { LLMProvider } from './provider';
 
 export class ScoringEngine {
-  private geminiApiKey: string;
+  private provider?: LLMProvider;
   private trustContributors: boolean;
   private reputationScores = new Map<string, number>();
 
-  constructor(geminiApiKey?: string, trustContributors = false) {
-    this.geminiApiKey = geminiApiKey ?? process.env.GEMINI_API_KEY ?? '';
+  constructor(provider?: LLMProvider, trustContributors = false) {
+    this.provider = provider;
     this.trustContributors = trustContributors;
   }
 
@@ -52,7 +49,7 @@ export class ScoringEngine {
     let llmRisk: 'low' | 'medium' | 'high' | undefined;
     let llmReason: string | undefined;
 
-    if (this.geminiApiKey) {
+    if (this.provider) {
       try {
         const llmResult = await this.scoreLLM(pr);
         llmScore = llmResult.score;
@@ -82,26 +79,12 @@ export class ScoringEngine {
   }
 
   private async scoreLLM(pr: PRData): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string }> {
-    await sleep(100); // Rate limiting
-
     const filesStr = pr.changedFiles.slice(0, 30).join(', ');
     const input = `Title: ${pr.title}\nBody: ${(pr.body ?? '').slice(0, 2000)}\nFiles: ${filesStr}`.slice(0, 4000);
 
     const prompt = `Rate this GitHub PR on practical value and merge-readiness (0-100). Focus on: Does it solve a real problem? Is the implementation correct and complete? Would merging it improve the project? Ignore whether AI/LLM was used to write it — only judge the end result. Return JSON: {"score": <number>, "risk": "low"|"medium"|"high", "reason": "<brief>"}\nRisk means: would merging this PR cause issues (breaking changes, bugs, security)?\n${input}`;
 
-    const res = await fetch(`${GEMINI_URL}?key=${this.geminiApiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 200 },
-      }),
-    });
-
-    if (!res.ok) throw new Error(`Gemini ${res.status}`);
-
-    const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    const text = await this.provider!.generateText(prompt, { temperature: 0.1, maxTokens: 200 });
 
     const match = text.match(/\{[^}]+\}/);
     if (match) {

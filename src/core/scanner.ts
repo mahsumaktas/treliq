@@ -23,7 +23,7 @@ export class TreliqScanner {
   constructor(config: TreliqConfig) {
     this.config = config;
     this.octokit = new Octokit({ auth: config.token, request: { timeout: 15000 } });
-    this.scoring = new ScoringEngine(config.geminiApiKey, config.trustContributors);
+    this.scoring = new ScoringEngine(config.provider, config.trustContributors);
   }
 
   async scan(): Promise<TreliqResult> {
@@ -111,13 +111,13 @@ export class TreliqScanner {
 
     // 3. Dedup
     let clusters = [] as import('./types').DedupCluster[];
-    if (this.config.geminiApiKey) {
+    if (this.config.provider) {
       try {
         console.error('🔍 Finding duplicates via embeddings...');
         const dedup = new DedupEngine(
           this.config.duplicateThreshold,
           this.config.relatedThreshold,
-          this.config.geminiApiKey,
+          this.config.provider,
         );
         clusters = await dedup.findDuplicates(scored);
         console.error(`   Found ${clusters.length} duplicate clusters`);
@@ -125,16 +125,16 @@ export class TreliqScanner {
         console.error(`⚠️  Dedup failed (skipping): ${err.message}`);
       }
     } else {
-      console.error('⏭️  Skipping dedup (no GEMINI_API_KEY)');
+      console.error('⏭️  Skipping dedup (no LLM provider)');
     }
 
     // 4. Vision check
-    if (this.config.geminiApiKey) {
+    if (this.config.provider) {
       try {
         console.error('🔭 Checking vision alignment...');
         const visionDoc = await this.fetchVisionDoc(owner, repo);
         if (visionDoc) {
-          const vision = new VisionChecker(visionDoc, this.config.geminiApiKey);
+          const vision = new VisionChecker(visionDoc, this.config.provider);
           for (const pr of scored) {
             try {
               const result = await vision.check(pr);

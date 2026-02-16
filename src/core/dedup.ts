@@ -3,18 +3,17 @@
  */
 
 import type { ScoredPR, DedupCluster } from './types';
-
-const EMBED_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent';
+import type { LLMProvider } from './provider';
 
 export class DedupEngine {
   private duplicateThreshold: number;
   private relatedThreshold: number;
-  private geminiApiKey: string;
+  private provider: LLMProvider;
 
-  constructor(duplicateThreshold = 0.85, relatedThreshold = 0.80, geminiApiKey?: string) {
+  constructor(duplicateThreshold = 0.85, relatedThreshold = 0.80, provider?: LLMProvider) {
     this.duplicateThreshold = duplicateThreshold;
     this.relatedThreshold = relatedThreshold;
-    this.geminiApiKey = geminiApiKey ?? process.env.GEMINI_API_KEY ?? '';
+    this.provider = provider!;
   }
 
   async findDuplicates(prs: ScoredPR[]): Promise<DedupCluster[]> {
@@ -127,21 +126,7 @@ export class DedupEngine {
   }
 
   private async embed(text: string): Promise<number[]> {
-    const res = await fetch(`${EMBED_URL}?key=${this.geminiApiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'models/gemini-embedding-001',
-        content: { parts: [{ text }] },
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Embedding API error: ${res.status} ${await res.text()}`);
-    }
-
-    const data = await res.json() as { embedding: { values: number[] } };
-    return data.embedding.values;
+    return this.provider.generateEmbedding(text);
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {
