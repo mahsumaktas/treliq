@@ -621,7 +621,7 @@ function render(){
       <td>${pr.filesChanged||0}</td>
       <td>${pr.isSpam?'<span class="spam">🚩 Spam</span>':'<span class="no-spam">✓</span>'}</td>
       <td>${pr.ageInDays!=null?pr.ageInDays+'d':'—'}</td>
-      <td>${pr.mergeable==='conflicting'?'<span class="spam">⚠️ Conflict</span>':(pr.mergeable==='mergeable'?'<span class="no-spam">✓</span>':(pr.mergeable||'—'))}</td>
+      <td>${pr.mergeable==='conflicting'?'<span class="spam">⚠️ Conflict</span>':(pr.mergeable==='mergeable'?'<span class="no-spam">✓</span>':'<span style="color:var(--muted);font-size:11px" title="GitHub henüz hesaplamadı">⏳ Pending</span>')}</td>
       <td style="color:var(--muted)">${pr.milestone||'—'}</td>
       <td>${reviewerCount>0?'<span style="color:var(--blue);font-weight:700">'+reviewerCount+'</span>':'—'}</td>
       <td>${risk.cls?`<span class="risk-pill ${risk.cls}">${risk.level}</span>`:risk.level}</td>
@@ -632,7 +632,7 @@ function render(){
   // Clusters
   const cd=document.getElementById('clusters');
   const clusters=data.duplicateClusters||[];
-  if(!clusters.length){cd.innerHTML='<div class="empty">No duplicate clusters found</div>';return;}
+  if(!clusters.length){cd.innerHTML='<div class="empty">No duplicate clusters found.<br><span style="font-size:12px;color:var(--muted)">Dedup requires an LLM API key (Gemini or OpenAI) for embedding generation.<br>Run scan with <code style="background:var(--surface);padding:2px 6px;border-radius:4px">--api-key YOUR_KEY --provider gemini</code> to enable.</span></div>';return;}
   cd.innerHTML=clusters.map(c=>`<div class="cluster">
     <div class="cluster-head">
       <h3>Cluster ${c.id}</h3>
