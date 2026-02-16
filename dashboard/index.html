@@ -572,7 +572,8 @@ function render(){
   document.getElementById('sections').style.display='block';
   const rawPRs=data.rankedPRs||[];
   // Ensure each PR has _repo field
-  rawPRs.forEach(p=>{if(!p._repo) p._repo=data.repo||'';});
+  const defaultRepo=data.repo||(data.repos&&data.repos[0])||'';
+  rawPRs.forEach(p=>{if(!p._repo) p._repo=defaultRepo;});
   allPRs=rawPRs;
   updateRepoFilter(rawPRs);
   const prs=repoFilterValue?rawPRs.filter(p=>(p._repo||data.repo||'')===repoFilterValue):rawPRs;
@@ -602,10 +603,10 @@ function render(){
     return sortAsc?(va>vb?1:-1):(va<vb?1:-1);
   });
 
-  const defaultRepo=data.repo||'';
+  const fallbackRepo=data.repo||(data.repos&&data.repos[0])||'';
   const tbody=document.getElementById('prBody');
   tbody.innerHTML=sorted.map(pr=>{
-    const repo=pr._repo||defaultRepo;
+    const repo=pr._repo||fallbackRepo;
     const repoShort=repo.split('/').pop()||repo;
     const c=pr.totalScore>=70?'var(--green)':pr.totalScore>=40?'var(--yellow)':'var(--red)';
     const risk=getLLMRisk(pr.llmScore);
