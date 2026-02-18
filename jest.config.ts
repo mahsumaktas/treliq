@@ -15,10 +15,10 @@ const config: Config = {
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/', '/test/'],
   coverageThreshold: {
     global: {
-      branches: 35,
-      functions: 50,
-      lines: 35,
-      statements: 35,
+      branches: 50,
+      functions: 70,
+      lines: 60,
+      statements: 60,
     },
   },
 };

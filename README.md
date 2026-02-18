@@ -12,7 +12,7 @@
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/tests-173_passing-2DA44E?style=flat-square" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-201_passing-2DA44E?style=flat-square" alt="Tests" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Node.js-≥18-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
@@ -33,14 +33,14 @@ Existing tools review code (CodeRabbit, Greptile, Copilot). None answer the main
 
 Code Review ≠ PR Triage. Treliq fills the gap.
 
-## What's New in v0.5
+## Current Quality Snapshot
 
-### 🧪 Test Suite (173 tests)
-- 9 test suites covering all core modules
+### 🧪 Test Suite (201 tests)
+- 15 test suites covering core modules and integration paths
 - Unit tests: 18 scoring signals, concurrency, rate limiting, webhooks, auth, config, cache
 - Integration tests: SQLite DB, full scoring engine pipeline
 - Test fixtures: `createPRData()`, `createScoredPR()`, `MockLLMProvider`
-- CI updated with `--coverage` flag and artifact upload
+- CI runs build, lint, and coverage with artifact upload
 
 ### 🔒 Security Hardening
 - **Rate limiting** — Global 100/min, scan 5/5min (`@fastify/rate-limit`)
