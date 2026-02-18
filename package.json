@@ -1,6 +1,6 @@
 {
   "name": "treliq",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "AI-Powered PR Triage for Open Source Maintainers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -4,6 +4,31 @@ All notable changes to Treliq will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-02-18
+
+### Added
+- Interactive `treliq init` setup wizard for guided first-time configuration.
+- `treliq demo` command for no-key sample output and faster onboarding.
+- Free-tier workflow support (`--no-llm`) with clearer CLI messaging.
+- High-coverage unit test suites for `scanner`, `graphql`, `provider`, `dedup`, `reputation`, `vision`, and `vectorstore`.
+- Expanded webhook and auth test coverage for safer automation paths.
+
+### Changed
+- CI now enforces `build + lint + test --coverage` before merge confidence.
+- Coverage thresholds raised to meaningful gates:
+  - branches: 50%
+  - functions: 70%
+  - lines/statements: 60%
+- README quality metrics updated to reflect current test and coverage status.
+
+### Quality
+- Total tests increased to 218.
+- Coverage improved to:
+  - 85.12% lines
+  - 84.01% statements
+  - 70.08% branches
+  - 91.83% functions
+
 ## [0.4.0] - 2025-02-16
 
 ### Added
@@ -54,6 +79,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Vision document alignment (VISION.md / ROADMAP.md check via LLM)
 - Output formats: table, JSON, markdown, GitHub comment
 
+[0.5.0]: https://github.com/mahsumaktas/treliq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mahsumaktas/treliq/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mahsumaktas/treliq/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mahsumaktas/treliq/compare/v0.1.0...v0.2.0
