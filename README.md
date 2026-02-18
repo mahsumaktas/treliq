@@ -105,7 +105,7 @@ Tested on OpenClaw PRs with 4 models:
 - 📡 **Real-time SSE** — Live dashboard updates via Server-Sent Events
 - 🔗 **GitHub Webhooks** — Auto-score PRs on open/update/close with HMAC-SHA256 verification
 - 🔍 **GraphQL Fetching** — ~80% fewer API calls using GitHub's GraphQL API
-- 📊 **18-Signal Scoring** — 5 new signals: draft status, milestone, label priority, CODEOWNERS, requested reviewers
+- 📊 **20-Signal Scoring** — Includes new Scope Coherence + PR Complexity analysis
 - 🗄️ **SQLite Persistence** — Full scan history, PR state tracking, repository management
 - ⚡ **Parallel LLM Scoring** — Concurrency-controlled parallel scoring with configurable limits
 - 🚦 **Rate Limit Manager** — Intelligent GitHub API pacing with automatic backoff
@@ -139,7 +139,7 @@ graph TB
 
     subgraph Core
         Scanner[Scanner]
-        Scoring[18-Signal Scoring Engine]
+        Scoring[20-Signal Scoring Engine]
         LLM[Multi-Provider LLM<br/>Gemini · OpenAI · Anthropic · OpenRouter]
         Dedup[Embedding Dedup<br/>LanceDB]
         Vision[Vision Doc Alignment]
