@@ -217,6 +217,73 @@ npx treliq scan -r owner/repo -p openai --api-key sk-...
 npx treliq scan -r owner/repo -p anthropic --api-key sk-ant-...
 ```
 
+### 🔧 Setup (recommended)
+
+```bash
+npx treliq init
+```
+
+`treliq init` runs an interactive setup wizard, validates your GitHub token, prompts for provider keys, and saves everything to `.treliq.yaml`.
+
+### 🆓 Free Mode (no API keys needed)
+
+```bash
+# See example output
+npx treliq demo
+
+# Heuristic-only scoring (18 signals, no LLM)
+npx treliq scan -r owner/repo --no-llm
+```
+
+### 🤖 GitHub Action
+
+1. Copy this workflow into `.github/workflows/treliq.yml`.
+2. Add the `GEMINI_API_KEY` repository secret.
+3. Open or update a PR and Treliq will auto-score it.
+
+```yaml
+name: Treliq PR Triage
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install -g treliq@latest
+      - name: Score PR
+        id: score
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          BODY=$(treliq score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown)
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - uses: actions/github-script@v7
+        env:
+          SCORE_BODY: ${{ steps.score.outputs.body }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: process.env.SCORE_BODY,
+            });
+```
+
 ## 18-Signal Scoring
 
 | # | Signal | Weight | Description |
@@ -241,56 +308,6 @@ npx treliq scan -r owner/repo -p anthropic --api-key sk-ant-...
 | 18 | Breaking Change | 0.04 | Risky files, large deletions, `!:` in title |
 
 When an LLM provider is configured, a **quality score** (0–100) is blended at **60% LLM / 40% heuristic**.
-
-## GitHub Action
-
-```yaml
-name: Treliq PR Triage
-on:
-  pull_request:
-    types: [opened, synchronize]
-  issue_comment:
-    types: [created]
-
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-
-jobs:
-  triage:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install -g treliq@latest
-      - name: Score PR
-        id: score
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          RESULT=$(treliq score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown)
-          echo "result<<EOF" >> $GITHUB_OUTPUT
-          echo "$RESULT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: process.env.SCORE_RESULT,
-            });
-        env:
-          SCORE_RESULT: ${{ steps.score.outputs.result }}
-```
-
-**PR Commands:** Comment `/treliq score` or `/treliq scan` on any PR.
 
 ## Configuration
 
