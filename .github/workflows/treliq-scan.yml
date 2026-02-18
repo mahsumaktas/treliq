@@ -12,7 +12,6 @@ permissions:
   issues: write
 
 jobs:
-  # Auto-scan new/updated PRs
   auto-scan:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -21,16 +20,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install treliq
-        run: |
-          npm install -g treliq@latest || npx treliq --version
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
       - name: Score PR
         id: score
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          RESULT=$(npx treliq score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown)
+          set +e
+          RESULT=$(node dist/cli.js score -r ${{ github.repository }} -n ${{ github.event.pull_request.number }} -f markdown --no-llm 2>&1)
+          EXIT_CODE=$?
+          set -e
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            RESULT="⚠️ Treliq auto-scan failed on this run (non-blocking).\n\nSee workflow logs for details."
+          fi
+
           echo "result<<EOF" >> $GITHUB_OUTPUT
           echo "$RESULT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -39,7 +47,6 @@ jobs:
         with:
           script: |
             const body = `<!-- treliq-score -->\n${process.env.SCORE_RESULT}`;
-            // Delete previous treliq comment if exists
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -62,7 +69,6 @@ jobs:
         env:
           SCORE_RESULT: ${{ steps.score.outputs.result }}
 
-  # /treliq score — score the current PR
   command-score:
     if: |
       github.event_name == 'issue_comment' &&
@@ -74,8 +80,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install treliq
-        run: npm install -g treliq@latest || npx treliq --version
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
       - name: Score PR
         id: score
         env:
@@ -83,7 +91,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           PR_NUM=${{ github.event.issue.number }}
-          RESULT=$(npx treliq score -r ${{ github.repository }} -n $PR_NUM -f markdown)
+          RESULT=$(node dist/cli.js score -r ${{ github.repository }} -n $PR_NUM -f markdown --no-llm)
           echo "result<<EOF" >> $GITHUB_OUTPUT
           echo "$RESULT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -100,7 +108,6 @@ jobs:
         env:
           SCORE_RESULT: ${{ steps.score.outputs.result }}
 
-  # /treliq scan — scan all open PRs
   command-scan:
     if: |
       github.event_name == 'issue_comment' &&
@@ -112,15 +119,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install treliq
-        run: npm install -g treliq@latest || npx treliq --version
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
       - name: Scan all PRs
         id: scan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          RESULT=$(npx treliq scan -r ${{ github.repository }} -m 100 -f markdown)
+          RESULT=$(node dist/cli.js scan -r ${{ github.repository }} -m 100 -f markdown --no-llm)
           echo "result<<EOF" >> $GITHUB_OUTPUT
           echo "$RESULT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT

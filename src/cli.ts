@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { createInterface } from 'readline';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
+import path from 'path';
+import { createInterface, type Interface } from 'readline';
 import { Octokit } from '@octokit/rest';
 import { TreliqScanner } from './core/scanner';
 import { ScoringEngine } from './core/scoring';
@@ -40,28 +42,143 @@ interface CLIOpts {
   discordWebhook?: string;
   appId?: string;
   privateKeyPath?: string;
+  llm?: boolean;
 }
 
-function resolveProvider(opts: CLIOpts): LLMProvider | undefined {
-  const providerName = (opts.provider ?? 'gemini') as ProviderName;
-  const envKeyMap: Record<ProviderName, string> = {
-    gemini: 'GEMINI_API_KEY',
-    openai: 'OPENAI_API_KEY',
-    anthropic: 'ANTHROPIC_API_KEY',
-  };
-  const apiKey = opts.apiKey || process.env[envKeyMap[providerName]];
+type ConfigProvider = ProviderName | 'none';
+
+interface TreliqFileConfig {
+  githubToken?: string;
+  provider?: ConfigProvider;
+  apiKey?: string;
+}
+
+const CONFIG_FILE_NAME = '.treliq.yaml';
+const YELLOW = '\x1b[33m';
+const RESET = '\x1b[0m';
+const PROVIDER_ENV_KEY_MAP: Record<ProviderName, string> = {
+  gemini: 'GEMINI_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+};
+
+function isProviderName(value: string): value is ProviderName {
+  return value === 'gemini' || value === 'openai' || value === 'anthropic';
+}
+
+function stripQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith('\'') && value.endsWith('\''))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function yamlValue(value: string): string {
+  if (value.length === 0 || /[:#\n\r]/.test(value) || /^\s|\s$/.test(value)) {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+function loadConfigFile(filePath = path.join(process.cwd(), CONFIG_FILE_NAME)): TreliqFileConfig | undefined {
+  if (!existsSync(filePath)) return undefined;
+
+  const raw = readFileSync(filePath, 'utf-8');
+  const config: TreliqFileConfig = {};
+
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const separator = trimmed.indexOf(':');
+    if (separator === -1) continue;
+
+    const key = trimmed.slice(0, separator).trim();
+    const value = stripQuotes(trimmed.slice(separator + 1).trim());
+    if (!value) continue;
+
+    if (key === 'github_token') config.githubToken = value;
+    if (key === 'provider') config.provider = value as ConfigProvider;
+    if (key === 'api_key') config.apiKey = value;
+  }
+
+  return config;
+}
+
+function saveConfigFile(config: TreliqFileConfig, filePath = path.join(process.cwd(), CONFIG_FILE_NAME)): void {
+  const lines = [
+    `github_token: ${yamlValue(config.githubToken ?? '')}`,
+    `provider: ${yamlValue(config.provider ?? 'none')}`,
+  ];
+
+  if (config.provider !== 'none' && config.apiKey) {
+    lines.push(`api_key: ${yamlValue(config.apiKey)}`);
+  }
+
+  writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
+}
+
+function question(rl: Interface, prompt: string): Promise<string> {
+  return new Promise(resolve => rl.question(prompt, resolve));
+}
+
+async function confirm(rl: Interface, prompt: string, defaultYes: boolean): Promise<boolean> {
+  while (true) {
+    const answer = (await question(rl, prompt)).trim().toLowerCase();
+    if (!answer) return defaultYes;
+    if (answer === 'y' || answer === 'yes') return true;
+    if (answer === 'n' || answer === 'no') return false;
+    console.log('Please answer yes or no.');
+  }
+}
+
+async function validateGitHubToken(token: string): Promise<{ ok: boolean; login?: string; error?: string }> {
+  try {
+    const octokit = new Octokit({ auth: token });
+    const { data } = await octokit.request('GET /user');
+    return { ok: true, login: data.login };
+  } catch (error: any) {
+    return { ok: false, error: error?.message ?? 'Unknown error' };
+  }
+}
+
+function resolveProvider(opts: CLIOpts, fileConfig?: TreliqFileConfig): LLMProvider | undefined {
+  if (opts.llm === false) return undefined;
+
+  const selected = (opts.provider ?? fileConfig?.provider ?? 'gemini').toLowerCase();
+  if (selected === 'none') return undefined;
+  if (!isProviderName(selected)) {
+    console.error(`❌ Invalid provider "${selected}". Use gemini, openai, anthropic, or none.`);
+    process.exit(1);
+  }
+  const providerName = selected as ProviderName;
+
+  let apiKey = opts.apiKey;
+  if (!apiKey && providerName === 'gemini') apiKey = opts.geminiKey;
+  if (!apiKey) apiKey = process.env[PROVIDER_ENV_KEY_MAP[providerName]];
+  if (!apiKey && fileConfig?.provider === providerName) apiKey = fileConfig.apiKey;
   if (!apiKey) return undefined;
 
   // For Anthropic, create a Gemini fallback for embeddings if available
   let embeddingFallback: LLMProvider | undefined;
   if (providerName === 'anthropic') {
-    const geminiKey = process.env.GEMINI_API_KEY;
-    const openaiKey = process.env.OPENAI_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY
+      || (fileConfig?.provider === 'gemini' ? fileConfig.apiKey : undefined);
+    const openaiKey = process.env.OPENAI_API_KEY
+      || (fileConfig?.provider === 'openai' ? fileConfig.apiKey : undefined);
     if (geminiKey) embeddingFallback = createProvider('gemini', geminiKey);
     else if (openaiKey) embeddingFallback = createProvider('openai', openaiKey);
   }
 
   return createProvider(providerName, apiKey, embeddingFallback);
+}
+
+function showHeuristicFallbackWarning() {
+  const message = '⚠ No LLM provider configured — using heuristic-only scoring (18 signals). Add a provider with: treliq init';
+  console.warn(`${YELLOW}${message}${RESET}`);
 }
 
 function validateRepo(repo: string): void {
@@ -83,15 +200,18 @@ function validateMaxPRs(maxStr: string): number {
 
 function makeConfig(opts: CLIOpts): TreliqConfig {
   validateRepo(opts.repo);
-  const token = opts.token || process.env.GITHUB_TOKEN || '';
-  const provider = resolveProvider(opts);
+  const fileConfig = loadConfigFile();
+  const token = opts.token || process.env.GITHUB_TOKEN || fileConfig?.githubToken || '';
+  const provider = resolveProvider(opts, fileConfig);
   const maxPRs = validateMaxPRs(opts.max ?? '500');
 
   return {
     repo: opts.repo,
     token,
     provider,
-    geminiApiKey: opts.geminiKey || process.env.GEMINI_API_KEY,
+    geminiApiKey: opts.geminiKey
+      || process.env.GEMINI_API_KEY
+      || (fileConfig?.provider === 'gemini' ? fileConfig.apiKey : undefined),
     duplicateThreshold: 0.85,
     relatedThreshold: 0.80,
     maxPRs,
@@ -204,13 +324,130 @@ program
   .version('0.4.0');
 
 program
+  .command('init')
+  .description('Interactive setup wizard for Treliq')
+  .action(async () => {
+    const configPath = path.join(process.cwd(), CONFIG_FILE_NAME);
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    try {
+      if (existsSync(configPath)) {
+        const overwrite = await confirm(rl, `${CONFIG_FILE_NAME} already exists. Overwrite? (y/N): `, false);
+        if (!overwrite) {
+          console.log('❌ Setup cancelled.');
+          return;
+        }
+      }
+
+      console.log('\n🔧 Treliq Setup Wizard\n');
+
+      const envToken = process.env.GITHUB_TOKEN?.trim();
+      let githubToken = '';
+      while (!githubToken) {
+        const tokenInput = (await question(
+          rl,
+          envToken
+            ? 'GitHub token (leave blank to use GITHUB_TOKEN env): '
+            : 'GitHub token: '
+        )).trim();
+
+        const candidateToken = tokenInput || envToken || '';
+        if (!candidateToken) {
+          console.error('❌ GitHub token is required.');
+          continue;
+        }
+
+        console.log('🔍 Validating token with GitHub...');
+        const validation = await validateGitHubToken(candidateToken);
+        if (!validation.ok) {
+          console.error(`❌ Token validation failed: ${validation.error}`);
+          const retry = await confirm(rl, 'Try again? (Y/n): ', true);
+          if (!retry) {
+            console.log('❌ Setup cancelled.');
+            return;
+          }
+          continue;
+        }
+
+        githubToken = candidateToken;
+        console.log(`✅ GitHub token validated for @${validation.login}`);
+      }
+
+      let provider: ConfigProvider = 'gemini';
+      while (true) {
+        const providerInput = (await question(
+          rl,
+          'LLM provider (gemini/openai/anthropic/none) [gemini]: '
+        )).trim().toLowerCase() || 'gemini';
+
+        if (providerInput === 'none' || isProviderName(providerInput)) {
+          provider = providerInput as ConfigProvider;
+          break;
+        }
+        console.error('❌ Invalid provider. Use gemini, openai, anthropic, or none.');
+      }
+
+      let apiKey: string | undefined;
+      if (provider !== 'none') {
+        const envKeyName = PROVIDER_ENV_KEY_MAP[provider];
+        const envApiKey = process.env[envKeyName]?.trim();
+
+        while (!apiKey) {
+          const keyInput = (await question(
+            rl,
+            envApiKey
+              ? `${provider} API key (leave blank to use ${envKeyName} env): `
+              : `${provider} API key: `
+          )).trim();
+
+          const candidateKey = keyInput || envApiKey || '';
+          if (!candidateKey) {
+            console.error(`❌ API key is required for ${provider}.`);
+            continue;
+          }
+          apiKey = candidateKey;
+        }
+      }
+
+      saveConfigFile({ githubToken, provider, apiKey }, configPath);
+      console.log(`\n✅ Setup complete. Saved ${CONFIG_FILE_NAME} in ${process.cwd()}`);
+      console.log('Next steps:');
+      console.log('  1) treliq scan -r owner/repo');
+      console.log('  2) treliq score -r owner/repo -n 123');
+      console.log('  3) treliq demo');
+    } finally {
+      rl.close();
+    }
+  });
+
+program
+  .command('demo')
+  .description('Show sample Treliq output without any API keys')
+  .action(() => {
+    console.log('\n🔍 Treliq Report — acme/webapp');
+    console.log('   5 PRs scanned | 1 spam | 0 dup clusters\n');
+
+    console.table([
+      { '#': 412, Category: 'spam', Score: 12, LLM: '-', Risk: '-', Title: 'fix typo in README', Author: 'promo-bot', Age: '2d', Conflict: 'mergeable', CI: 'success', Spam: '🚩 Spam' },
+      { '#': 377, Category: 'stale', Score: 35, LLM: '-', Risk: '-', Title: 'chore: bump legacy webpack plugin', Author: 'old-contrib', Age: '118d', Conflict: 'unknown', CI: 'pending', Spam: 'Clean' },
+      { '#': 425, Category: 'docs', Score: 58, LLM: '-', Risk: '-', Title: 'docs: add troubleshooting section', Author: 'docwriter', Age: '5d', Conflict: 'mergeable', CI: 'success', Spam: 'Clean' },
+      { '#': 438, Category: 'good', Score: 74, LLM: '-', Risk: '-', Title: 'feat(api): add pagination validation', Author: 'alice-dev', Age: '3d', Conflict: 'mergeable', CI: 'success', Spam: 'Clean' },
+      { '#': 219, Category: 'excellent', Score: 91, LLM: '-', Risk: '-', Title: 'feat(auth): add SSO login with tests', Author: 'core-team', Age: '1d', Conflict: 'mergeable', CI: 'success', Spam: 'Clean' },
+    ]);
+
+    console.log('\n📝 Scanned 5 PRs in acme/webapp. 1 flagged as spam. 0 duplicate clusters found. Top PR: #219 (91/100) — feat(auth): add SSO login with tests');
+    console.log('\nRun a real scan with: treliq scan -r owner/repo --no-llm');
+  });
+
+program
   .command('scan')
   .description('Scan all open PRs in a repository')
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
   .option('-k, --gemini-key <key>', 'Gemini API key (or GEMINI_API_KEY env)')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|none')
   .option('--api-key <key>', 'API key for the selected provider')
+  .option('--no-llm', 'Disable LLM scoring and use heuristic-only mode')
   .option('-f, --format <format>', 'Output format: table|json|markdown', 'table')
   .option('-m, --max <number>', 'Max PRs to scan', '500')
   .option('--comment', 'Post results as PR comments', false)
@@ -223,6 +460,9 @@ program
       console.error('❌ GITHUB_TOKEN required. Set via env or --token flag.');
       process.exit(1);
     }
+    if (!config.provider && opts.llm !== false) {
+      showHeuristicFallbackWarning();
+    }
     const scanner = new TreliqScanner(config);
     const result = await scanner.scan();
     outputResult(result, config.outputFormat);
@@ -234,14 +474,19 @@ program
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .requiredOption('-n, --pr <number>', 'PR number')
   .option('-t, --token <token>', 'GitHub token')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('-k, --gemini-key <key>', 'Gemini API key (or GEMINI_API_KEY env)')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|none')
   .option('--api-key <key>', 'API key for the selected provider')
+  .option('--no-llm', 'Disable LLM scoring and use heuristic-only mode')
   .option('-f, --format <format>', 'Output format', 'table')
   .action(async (opts: CLIOpts) => {
     const config = makeConfig(opts);
     if (!config.token) {
       console.error('❌ GITHUB_TOKEN required.');
       process.exit(1);
+    }
+    if (!config.provider && opts.llm !== false) {
+      showHeuristicFallbackWarning();
     }
 
     const prNum = parseInt(opts.pr!, 10);
@@ -269,14 +514,14 @@ program
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token')
   .option('-k, --gemini-key <key>', 'Gemini API key')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('-f, --format <format>', 'Output format', 'table')
   .option('-m, --max <number>', 'Max PRs', '500')
   .action(async (opts: CLIOpts) => {
     const config = makeConfig(opts);
     if (!config.token) { console.error('❌ GITHUB_TOKEN required.'); process.exit(1); }
-    if (!config.provider) { console.error('❌ API key required for dedup. Set via --api-key or env var.'); process.exit(1); }
+    if (!config.provider) { console.error('❌ API key required for dedup. Set via treliq init, --api-key, or provider env var.'); process.exit(1); }
 
     const scanner = new TreliqScanner(config);
     const prs = await scanner.fetchPRs();
