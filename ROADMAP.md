@@ -42,13 +42,24 @@
 - **Slack/Discord Notifications**: Scan result alerts via webhook URLs
 - **New CLI Commands**: `close-spam`, `label-by-score`, `server`
 
-## v0.5 — Distribution (Planned)
+## v0.5 — Distribution ✅
 
 - npm publish (`npm install -g treliq`)
+- `treliq init` + `treliq demo` onboarding
+- Free mode (`--no-llm`) quality improvements
+- 20-signal scoring baseline
+- OpenRouter provider + `--model` model selection
+- Embedding auto-fallback for Anthropic/OpenRouter
+- Scope coherence + PR complexity signals
+
+## v0.6 — Workflow Intelligence (Planned)
+
 - Multi-repo dashboard (unified view across all repos)
 - Team-based triage queues (assign PRs to reviewers)
-- Custom scoring rule overrides (YAML config)
-- Fine-tuned model support (custom LLM for domain-specific scoring)
+- Configurable scoring weights/rules (YAML overrides)
+- Bot review parser (CodeRabbit/Greptile/etc.)
+- Stacked PR detection + dependency graph
+- Weekly digest + DORA metrics + contributor leaderboard
 - GitHub Marketplace App listing
 
 ---

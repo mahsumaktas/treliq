@@ -4,6 +4,24 @@ All notable changes to Treliq will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-02-19
+
+### Added
+- `--model` flag for provider-level model selection on scan/score/dedup flows.
+- OpenRouter provider support (`--provider openrouter`) with model routing.
+- Scope Coherence signal for detecting scattered/unfocused PR changes.
+- PR Complexity signal for size-aware and overengineering-aware scoring.
+- Release notes doc: `docs/RELEASE_v0.5.1.md`.
+
+### Changed
+- Heuristic-only messaging and docs updated from 18 → 20 signals.
+- Dashboard/docs copy refreshed for v0.5.1 messaging.
+- Dedup empty-state help text updated for embedding fallback behavior.
+
+### Fixed
+- Embedding fallback now auto-detects Gemini/OpenAI keys for non-embedding providers.
+- Provider/test compatibility after provider constructor/model updates.
+
 ## [0.5.0] - 2026-02-18
 
 ### Added
@@ -79,6 +97,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Vision document alignment (VISION.md / ROADMAP.md check via LLM)
 - Output formats: table, JSON, markdown, GitHub comment
 
+[0.5.1]: https://github.com/mahsumaktas/treliq/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mahsumaktas/treliq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mahsumaktas/treliq/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mahsumaktas/treliq/compare/v0.2.0...v0.3.0

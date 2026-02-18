@@ -40,6 +40,8 @@ treliq server --port 4747
 | `GEMINI_API_KEY` | Both | Google Gemini API key |
 | `OPENAI_API_KEY` | Both | OpenAI API key (alternative) |
 | `ANTHROPIC_API_KEY` | Both | Anthropic API key (alternative) |
+| `OPENROUTER_API_KEY` | Both | OpenRouter API key (multi-model gateway) |
+| `TRELIQ_MODEL` | Both | Optional global model override (e.g. `claude-sonnet-4-6`) |
 
 ## GitHub App Setup
 

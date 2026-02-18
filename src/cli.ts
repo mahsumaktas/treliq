@@ -172,7 +172,7 @@ function resolveProvider(opts: CLIOpts, fileConfig?: TreliqFileConfig): LLMProvi
 }
 
 function showHeuristicFallbackWarning() {
-  const message = '⚠ No LLM provider configured — using heuristic-only scoring (18 signals). Add a provider with: treliq init';
+  const message = '⚠ No LLM provider configured — using heuristic-only scoring (20 signals). Add a provider with: treliq init';
   console.warn(`${YELLOW}${message}${RESET}`);
 }
 
@@ -379,7 +379,7 @@ program
           provider = providerInput as ConfigProvider;
           break;
         }
-        console.error('❌ Invalid provider. Use gemini, openai, anthropic, openrouter. openrouter, or none.');
+        console.error('❌ Invalid provider. Use gemini, openai, anthropic, openrouter, or none.');
       }
 
       let apiKey: string | undefined;

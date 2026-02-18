@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Treliq Dashboard</title>
+<title>Treliq v0.5.1 Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1797,7 +1797,7 @@ function renderClusters(){
   if(!data)return;
   const clusters=data.duplicateClusters||[];
   if(clusters.length===0){
-    document.getElementById('clustersContent').innerHTML='<div class="empty">No duplicate clusters found.<br><span style="font-size:11px;color:var(--muted)">Dedup requires an LLM API key (Gemini or OpenAI) for embedding generation.<br>Run scan with <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11px">--api-key YOUR_KEY --provider gemini</code> to enable.</span></div>';
+    document.getElementById('clustersContent').innerHTML='<div class="empty">No duplicate clusters found.<br><span style="font-size:11px;color:var(--muted)">Dedup requires embeddings. If using Anthropic/OpenRouter, set GEMINI_API_KEY or OPENAI_API_KEY for auto-fallback.<br>Example: <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:11px">--provider openrouter --model anthropic/claude-sonnet-4.5</code></span></div>';
     return;
   }
 
