@@ -397,7 +397,7 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      expect(scored.signals).toHaveLength(18);
+      expect(scored.signals).toHaveLength(20);
 
       const signalNames = scored.signals.map(s => s.name);
       expect(signalNames).toContain('ci_status');
@@ -418,6 +418,8 @@ describe('ScoringEngine', () => {
       expect(signalNames).toContain('label_priority');
       expect(signalNames).toContain('codeowners');
       expect(signalNames).toContain('requested_reviewers');
+      expect(signalNames).toContain('scope_coherence');
+      expect(signalNames).toContain('complexity');
     });
 
     it('should have valid weights that sum to reasonable total', async () => {
