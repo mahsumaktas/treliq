@@ -43,6 +43,7 @@ interface CLIOpts {
   appId?: string;
   privateKeyPath?: string;
   llm?: boolean;
+  model?: string;
 }
 
 type ConfigProvider = ProviderName | 'none';
@@ -51,6 +52,7 @@ interface TreliqFileConfig {
   githubToken?: string;
   provider?: ConfigProvider;
   apiKey?: string;
+  model?: string;
 }
 
 const CONFIG_FILE_NAME = '.treliq.yaml';
@@ -60,10 +62,11 @@ const PROVIDER_ENV_KEY_MAP: Record<ProviderName, string> = {
   gemini: 'GEMINI_API_KEY',
   openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
 };
 
 function isProviderName(value: string): value is ProviderName {
-  return value === 'gemini' || value === 'openai' || value === 'anthropic';
+  return value === 'gemini' || value === 'openai' || value === 'anthropic' || value === 'openrouter';
 }
 
 function stripQuotes(value: string): string {
@@ -151,7 +154,7 @@ function resolveProvider(opts: CLIOpts, fileConfig?: TreliqFileConfig): LLMProvi
   const selected = (opts.provider ?? fileConfig?.provider ?? 'gemini').toLowerCase();
   if (selected === 'none') return undefined;
   if (!isProviderName(selected)) {
-    console.error(`❌ Invalid provider "${selected}". Use gemini, openai, anthropic, or none.`);
+    console.error(`❌ Invalid provider "${selected}". Use gemini, openai, anthropic, openrouter, or none.`);
     process.exit(1);
   }
   const providerName = selected as ProviderName;
@@ -162,18 +165,10 @@ function resolveProvider(opts: CLIOpts, fileConfig?: TreliqFileConfig): LLMProvi
   if (!apiKey && fileConfig?.provider === providerName) apiKey = fileConfig.apiKey;
   if (!apiKey) return undefined;
 
-  // For Anthropic, create a Gemini fallback for embeddings if available
-  let embeddingFallback: LLMProvider | undefined;
-  if (providerName === 'anthropic') {
-    const geminiKey = process.env.GEMINI_API_KEY
-      || (fileConfig?.provider === 'gemini' ? fileConfig.apiKey : undefined);
-    const openaiKey = process.env.OPENAI_API_KEY
-      || (fileConfig?.provider === 'openai' ? fileConfig.apiKey : undefined);
-    if (geminiKey) embeddingFallback = createProvider('gemini', geminiKey);
-    else if (openaiKey) embeddingFallback = createProvider('openai', openaiKey);
-  }
+  // Resolve model: CLI --model > env TRELIQ_MODEL > config file > provider default
+  const model = opts.model ?? process.env.TRELIQ_MODEL ?? fileConfig?.model ?? undefined;
 
-  return createProvider(providerName, apiKey, embeddingFallback);
+  return createProvider(providerName, apiKey, model);
 }
 
 function showHeuristicFallbackWarning() {
@@ -377,14 +372,14 @@ program
       while (true) {
         const providerInput = (await question(
           rl,
-          'LLM provider (gemini/openai/anthropic/none) [gemini]: '
+          'LLM provider (gemini/openai/anthropic/openrouter/none) [gemini]: '
         )).trim().toLowerCase() || 'gemini';
 
         if (providerInput === 'none' || isProviderName(providerInput)) {
           provider = providerInput as ConfigProvider;
           break;
         }
-        console.error('❌ Invalid provider. Use gemini, openai, anthropic, or none.');
+        console.error('❌ Invalid provider. Use gemini, openai, anthropic, openrouter. openrouter, or none.');
       }
 
       let apiKey: string | undefined;
@@ -445,7 +440,8 @@ program
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
   .option('-k, --gemini-key <key>', 'Gemini API key (or GEMINI_API_KEY env)')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|none')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter|none')
+  .option('-m, --model <name>', 'LLM model name (overrides provider default)')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('--no-llm', 'Disable LLM scoring and use heuristic-only mode')
   .option('-f, --format <format>', 'Output format: table|json|markdown', 'table')
@@ -475,7 +471,8 @@ program
   .requiredOption('-n, --pr <number>', 'PR number')
   .option('-t, --token <token>', 'GitHub token')
   .option('-k, --gemini-key <key>', 'Gemini API key (or GEMINI_API_KEY env)')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|none')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter|none')
+  .option('-m, --model <name>', 'LLM model name (overrides provider default)')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('--no-llm', 'Disable LLM scoring and use heuristic-only mode')
   .option('-f, --format <format>', 'Output format', 'table')
@@ -514,7 +511,7 @@ program
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token')
   .option('-k, --gemini-key <key>', 'Gemini API key')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('-f, --format <format>', 'Output format', 'table')
   .option('-m, --max <number>', 'Max PRs', '500')
@@ -553,7 +550,7 @@ program
   .description('Close PRs identified as spam')
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter', 'gemini')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('--threshold <score>', 'Score threshold for spam detection', '25')
   .option('--dry-run', 'Preview only, do not close PRs', false)
@@ -645,7 +642,7 @@ program
   .description('Apply priority labels based on PR scores')
   .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
   .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter', 'gemini')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('--high <score>', 'High priority threshold', '80')
   .option('--medium <score>', 'Medium priority threshold', '50')
@@ -765,7 +762,7 @@ program
   .option('--host <host>', 'Server host', '0.0.0.0')
   .option('--db-path <path>', 'SQLite database path', './treliq.db')
   .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
-  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic', 'gemini')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter', 'gemini')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('--schedule <repos>', 'Comma-separated repos for hourly scanning')
   .option('--cron <expression>', 'Custom cron expression', '0 * * * *')

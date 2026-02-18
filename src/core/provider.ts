@@ -4,23 +4,41 @@
 
 async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
+/** Default models per provider */
+export const DEFAULT_PROVIDER_MODELS: Record<string, string> = {
+  gemini: 'gemini-2.0-flash',
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-haiku-4-5-20251001',
+  openrouter: 'anthropic/claude-sonnet-4.5',
+};
+
+/** Models that need higher max_tokens (extended thinking, verbose output) */
+function defaultMaxTokens(model: string): number {
+  if (/sonnet|opus|claude-3/.test(model)) return 1024;
+  return 200;
+}
+
 export interface LLMProvider {
   generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string>;
   generateEmbedding(text: string): Promise<number[]>;
   name: string;
+  readonly supportsEmbeddings?: boolean;
 }
 
 export class GeminiProvider implements LLMProvider {
   readonly name = 'gemini';
+  readonly supportsEmbeddings = true;
   private apiKey: string;
+  private model: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, model = DEFAULT_PROVIDER_MODELS.gemini) {
     this.apiKey = apiKey;
+    this.model = model;
   }
 
   async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
     await sleep(100);
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
@@ -28,7 +46,7 @@ export class GeminiProvider implements LLMProvider {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: options?.temperature ?? 0.1,
-          maxOutputTokens: options?.maxTokens ?? 200,
+          maxOutputTokens: options?.maxTokens ?? defaultMaxTokens(this.model),
         },
       }),
     });
@@ -56,10 +74,13 @@ export class GeminiProvider implements LLMProvider {
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = 'openai';
+  readonly supportsEmbeddings = true;
   private apiKey: string;
+  private model: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, model = DEFAULT_PROVIDER_MODELS.openai) {
     this.apiKey = apiKey;
+    this.model = model;
   }
 
   async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
@@ -71,10 +92,10 @@ export class OpenAIProvider implements LLMProvider {
         'Authorization': `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: this.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: options?.temperature ?? 0.1,
-        max_tokens: options?.maxTokens ?? 200,
+        max_tokens: options?.maxTokens ?? defaultMaxTokens(this.model),
       }),
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}`);
@@ -107,11 +128,14 @@ export class OpenAIProvider implements LLMProvider {
 
 export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic';
+  readonly supportsEmbeddings = false;
   private apiKey: string;
+  private model: string;
   private embeddingFallback?: LLMProvider;
 
-  constructor(apiKey: string, embeddingFallback?: LLMProvider) {
+  constructor(apiKey: string, model = DEFAULT_PROVIDER_MODELS.anthropic, embeddingFallback?: LLMProvider) {
     this.apiKey = apiKey;
+    this.model = model;
     this.embeddingFallback = embeddingFallback;
   }
 
@@ -125,8 +149,8 @@ export class AnthropicProvider implements LLMProvider {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: options?.maxTokens ?? 200,
+        model: this.model,
+        max_tokens: options?.maxTokens ?? defaultMaxTokens(this.model),
         messages: [{ role: 'user', content: prompt }],
         temperature: options?.temperature ?? 0.1,
       }),
@@ -144,13 +168,70 @@ export class AnthropicProvider implements LLMProvider {
   }
 }
 
-export type ProviderName = 'gemini' | 'openai' | 'anthropic';
+export class OpenRouterProvider implements LLMProvider {
+  readonly name = 'openrouter';
+  readonly supportsEmbeddings = false;
+  private apiKey: string;
+  private model: string;
+  private embeddingFallback?: LLMProvider;
 
-export function createProvider(name: ProviderName, apiKey: string, embeddingFallback?: LLMProvider): LLMProvider {
+  constructor(apiKey: string, model = DEFAULT_PROVIDER_MODELS.openrouter, embeddingFallback?: LLMProvider) {
+    this.apiKey = apiKey;
+    this.model = model;
+    this.embeddingFallback = embeddingFallback;
+  }
+
+  async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
+    await sleep(100);
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+        'HTTP-Referer': 'https://github.com/mahsumaktas/treliq',
+        'X-Title': 'Treliq PR Triage',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options?.temperature ?? 0.1,
+        max_tokens: options?.maxTokens ?? defaultMaxTokens(this.model),
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${await res.text()}`);
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    return data.choices?.[0]?.message?.content ?? '';
+  }
+
+  async generateEmbedding(text: string): Promise<number[]> {
+    if (!this.embeddingFallback) {
+      throw new Error('OpenRouter does not support embeddings. Provide an embeddingFallback provider (e.g., Gemini).');
+    }
+    return this.embeddingFallback.generateEmbedding(text);
+  }
+}
+
+export type ProviderName = 'gemini' | 'openai' | 'anthropic' | 'openrouter';
+
+/**
+ * Auto-detect an embedding fallback provider from available env vars.
+ */
+export function autoEmbeddingFallback(): LLMProvider | undefined {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) return new GeminiProvider(geminiKey);
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) return new OpenAIProvider(openaiKey);
+  return undefined;
+}
+
+export function createProvider(name: ProviderName, apiKey: string, model?: string, embeddingFallback?: LLMProvider): LLMProvider {
+  const m = model || DEFAULT_PROVIDER_MODELS[name];
+  const ef = embeddingFallback ?? autoEmbeddingFallback();
   switch (name) {
-    case 'gemini': return new GeminiProvider(apiKey);
-    case 'openai': return new OpenAIProvider(apiKey);
-    case 'anthropic': return new AnthropicProvider(apiKey, embeddingFallback);
+    case 'gemini': return new GeminiProvider(apiKey, m);
+    case 'openai': return new OpenAIProvider(apiKey, m);
+    case 'anthropic': return new AnthropicProvider(apiKey, m, ef);
+    case 'openrouter': return new OpenRouterProvider(apiKey, m, ef);
     default: throw new Error(`Unknown provider: ${name}`);
   }
 }

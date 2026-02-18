@@ -68,6 +68,8 @@ export class ScoringEngine {
       this.scoreLabelPriority(pr),
       this.scoreCodeowners(pr),
       this.scoreRequestedReviewers(pr),
+      this.scoreScopeCoherence(pr),
+      this.scoreComplexity(pr),
     ];
 
     const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
@@ -355,6 +357,113 @@ export class ScoringEngine {
       reason: pr.requestedReviewers.length > 0
         ? `${pr.requestedReviewers.length} reviewer(s): ${pr.requestedReviewers.slice(0, 3).join(', ')}`
         : 'No reviewers requested',
+    };
+  }
+
+  // --- v0.5.1 signals ---
+
+  /** Scope coherence: do all changed files belong to the same area? */
+  private scoreScopeCoherence(pr: PRData): SignalScore {
+    const files = pr.changedFiles;
+    if (files.length === 0) return { name: 'scope_coherence', score: 50, weight: 0.06, reason: 'No files' };
+
+    // Extract top-level directories
+    const topDirs = new Set<string>();
+    for (const f of files) {
+      const parts = f.split('/');
+      if (parts.length === 1) topDirs.add('(root)');
+      else topDirs.add(parts[0] + '/' + (parts[1] ?? ''));
+    }
+
+    const dirCount = topDirs.size;
+    let score: number;
+    let label: string;
+
+    if (dirCount <= 1) {
+      score = 90; label = 'focused';
+    } else if (dirCount <= 2) {
+      score = 70; label = 'normal';
+    } else if (dirCount <= 4) {
+      score = 50; label = 'mixed';
+    } else {
+      score = 25; label = 'scattered';
+    }
+
+    // Title-to-files mismatch check: simple keyword extraction
+    const titleWords = pr.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 3);
+    const fileWords = files.map(f => f.toLowerCase().replace(/[^a-z0-9]/g, ' ')).join(' ');
+    const matchCount = titleWords.filter(w => fileWords.includes(w)).length;
+    const titleMatch = titleWords.length > 0 ? matchCount / titleWords.length : 1;
+    if (titleMatch < 0.2 && dirCount > 2) {
+      score = Math.max(15, score - 20);
+      label = 'scattered';
+    }
+
+    return {
+      name: 'scope_coherence',
+      score,
+      weight: 0.06,
+      reason: `${label}: ${dirCount} area(s) [${[...topDirs].slice(0, 4).join(', ')}]`,
+    };
+  }
+
+  /** Large PR complexity: detect overengineered or massive PRs */
+  private scoreComplexity(pr: PRData): SignalScore {
+    const total = pr.additions + pr.deletions;
+    const files = pr.changedFiles;
+    if (total === 0) return { name: 'complexity', score: 50, weight: 0.05, reason: 'Empty diff' };
+
+    let score = 80;
+    const flags: string[] = [];
+
+    // Lines-per-file ratio
+    const linesPerFile = files.length > 0 ? total / files.length : total;
+    if (linesPerFile > 300) {
+      score -= 15;
+      flags.push(`${Math.round(linesPerFile)} lines/file avg`);
+    } else if (linesPerFile > 200) {
+      score -= 5;
+    }
+
+    // Size thresholds
+    if (total > 5000) {
+      score -= 25; flags.push(`XXL: ${total} lines`);
+    } else if (total > 1000) {
+      score -= 15; flags.push(`XL: ${total} lines`);
+    } else if (total > 500) {
+      score -= 5; flags.push(`L: ${total} lines`);
+    }
+
+    // Test-to-code ratio for large PRs
+    if (total > 200) {
+      const testFiles = files.filter(f => /test|spec|__tests__/i.test(f));
+      if (testFiles.length === 0) {
+        score -= 10; flags.push('no tests');
+      }
+    }
+
+    // AI-generated signals
+    const titleBody = `${pr.title} ${pr.body ?? ''}`.toLowerCase();
+    if (/ai[\s-]?(assisted|generated)|copilot|cursor|chatgpt|claude/i.test(titleBody)) {
+      flags.push('AI-generated');
+      // Extra scrutiny for large AI PRs
+      if (total > 200) { score -= 10; flags.push('large AI PR'); }
+    }
+
+    // Simple title + large diff = overengineered
+    const titleLen = pr.title.replace(/^(feat|fix|docs|chore|refactor|ci|test)(\(.+?\))?:\s*/, '').length;
+    if (titleLen < 30 && total > 400) {
+      score -= 10; flags.push('simple title, large diff');
+    }
+
+    score = Math.max(5, Math.min(100, score));
+    const label = score >= 70 ? 'proportional' : score >= 40 ? 'overengineered' : 'massive';
+
+    return {
+      name: 'complexity',
+      score,
+      weight: 0.05,
+      reason: flags.length > 0 ? `${label}: ${flags.join(', ')}` : `${label}: ${total} lines, ${files.length} files`,
     };
   }
 }
