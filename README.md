@@ -12,8 +12,9 @@
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/tests-218_passing-2DA44E?style=flat-square" alt="Tests" />
-  <img src="https://img.shields.io/badge/coverage-85%25-2DA44E?style=flat-square" alt="Coverage" />
+  <img src="https://img.shields.io/badge/tests-220_passing-2DA44E?style=flat-square" alt="Tests" />
+  <img src="https://img.shields.io/badge/signals-20-8B5CF6?style=flat-square" alt="20 Signals" />
+  <img src="https://img.shields.io/badge/providers-4-FF6600?style=flat-square" alt="4 Providers" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Node.js-≥18-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
@@ -33,6 +34,44 @@ Existing tools review code (CodeRabbit, Greptile, Copilot). None answer the main
 - **"Show me the top 10 PRs I should review today."**
 
 Code Review ≠ PR Triage. Treliq fills the gap.
+
+## What's New in v0.5.1
+
+### 🎯 Model Flexibility
+- **`--model` flag** — Choose any model within your provider: `--model claude-sonnet-4-6`
+- **`TRELIQ_MODEL` env var** — Set globally without CLI flags
+- **Auto max_tokens** — Sonnet/Opus get 1024 tokens (extended thinking), Flash/Haiku get 200
+
+### 🌐 OpenRouter Provider
+- Route through OpenRouter for unified billing and 200+ model access
+- `--provider openrouter --model anthropic/claude-sonnet-4.5`
+- Automatic embedding fallback to Gemini/OpenAI
+
+### 🔗 Embedding Auto-Fallback
+- Non-embedding providers (Anthropic, OpenRouter) auto-detect `GEMINI_API_KEY` or `OPENAI_API_KEY`
+- Dedup works seamlessly regardless of LLM provider
+
+### 🎯 Scope Coherence Signal (NEW)
+- Detects unfocused PRs via directory spread analysis
+- Labels: `focused` → `normal` → `mixed` → `scattered`
+- Title-to-files mismatch detection (e.g., "fix rate-limit" touching `compaction.ts`)
+
+### 🔬 PR Complexity Signal (NEW)
+- Lines-per-file ratio analysis (detects dumped/generated code)
+- Size threshold penalties (L/XL/XXL with context)
+- AI-generated code detection (`AI assisted`, `copilot`, `cursor`, `chatgpt`)
+- Simple title + large diff = overengineered flag
+- Test-to-code ratio for large PRs
+- Labels: `proportional` → `overengineered` → `massive`
+
+### 📊 Model Benchmark Results
+Tested on OpenClaw PRs with 4 models:
+| Model | Scoring Style | Best For |
+|---|---|---|
+| Gemini 2.0 Flash | Generous (85-95) | Free tier, high volume |
+| Haiku 4.5 | Balanced (72-92) | Fast, cheap daily scans |
+| Sonnet 4.5 | Conservative (72-92) | Accurate triage |
+| **Sonnet 4.6** | Most selective | Best quality, vision scoring |
 
 ## What's New in v0.5
 
@@ -101,7 +140,7 @@ graph TB
     subgraph Core
         Scanner[Scanner]
         Scoring[18-Signal Scoring Engine]
-        LLM[Multi-Provider LLM<br/>Gemini · OpenAI · Anthropic]
+        LLM[Multi-Provider LLM<br/>Gemini · OpenAI · Anthropic · OpenRouter]
         Dedup[Embedding Dedup<br/>LanceDB]
         Vision[Vision Doc Alignment]
         Rep[Contributor Reputation]
@@ -209,14 +248,23 @@ The server exposes:
 ### Multi-Provider LLM
 
 ```bash
-# Default: Gemini Flash
+# Default: Gemini Flash (free)
 npx treliq scan -r owner/repo
+
+# Choose a specific model
+npx treliq scan -r owner/repo -p anthropic --model claude-sonnet-4-6
+
+# OpenRouter (200+ models, unified billing)
+npx treliq scan -r owner/repo -p openrouter --model anthropic/claude-sonnet-4.5
 
 # OpenAI
 npx treliq scan -r owner/repo -p openai --api-key sk-...
 
-# Anthropic (embeddings fall back to Gemini/OpenAI)
+# Anthropic (embeddings auto-fallback to Gemini/OpenAI)
 npx treliq scan -r owner/repo -p anthropic --api-key sk-ant-...
+
+# Heuristic-only (no API keys needed, 20 signals)
+npx treliq scan -r owner/repo --no-llm
 ```
 
 ### 🔧 Setup (recommended)
@@ -233,7 +281,7 @@ npx treliq init
 # See example output
 npx treliq demo
 
-# Heuristic-only scoring (18 signals, no LLM)
+# Heuristic-only scoring (20 signals, no LLM)
 npx treliq scan -r owner/repo --no-llm
 ```
 
@@ -286,7 +334,7 @@ jobs:
             });
 ```
 
-## 18-Signal Scoring
+## 20-Signal Scoring
 
 | # | Signal | Weight | Description |
 |---|--------|--------|-------------|
@@ -308,6 +356,8 @@ jobs:
 | 16 | Body Quality | 0.04 | Description length, checklists, screenshots |
 | 17 | Activity | 0.04 | Comment count — engagement signal |
 | 18 | Breaking Change | 0.04 | Risky files, large deletions, `!:` in title |
+| 19 | **Scope Coherence** | 0.06 | Directory spread, title-to-files alignment |
+| 20 | **PR Complexity** | 0.05 | Size analysis, AI detection, overengineering |
 
 When an LLM provider is configured, a **quality score** (0–100) is blended at **60% LLM / 40% heuristic**.
 
@@ -321,6 +371,8 @@ When an LLM provider is configured, a **quality score** (0–100) is blended at 
 | `GEMINI_API_KEY` | Gemini (default) | LLM scoring, embeddings, vision |
 | `OPENAI_API_KEY` | OpenAI | LLM scoring, embeddings |
 | `ANTHROPIC_API_KEY` | Anthropic | LLM scoring (embeddings via fallback) |
+| `OPENROUTER_API_KEY` | OpenRouter | Multi-model gateway (200+ models) |
+| `TRELIQ_MODEL` | Any | Override default model for any provider |
 
 ### Server Configuration
 

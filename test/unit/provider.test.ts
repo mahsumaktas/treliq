@@ -80,7 +80,7 @@ describe('provider', () => {
       generateText: jest.fn(),
       generateEmbedding: jest.fn().mockResolvedValue([0.1, 0.2, 0.3]),
     };
-    const provider = new AnthropicProvider('anthropic-key', fallback);
+    const provider = new AnthropicProvider('anthropic-key', undefined, fallback);
 
     const embedding = await provider.generateEmbedding('sample');
 
