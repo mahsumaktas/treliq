@@ -315,7 +315,7 @@ function outputScoredPR(scored: ScoredPR, format: string) {
 
 program
   .name('treliq')
-  .description('AI-Powered PR Triage for Open Source Maintainers')
+  .description('AI-Powered PR Triage for Maintainers & Enterprise Teams')
   .version('0.4.0');
 
 program

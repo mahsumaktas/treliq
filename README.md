@@ -2,10 +2,10 @@
   <img src="docs/logo.png" alt="Treliq" width="140" />
 </p>
 
-<h3 align="center">AI-Powered PR Triage for Open Source Maintainers</h3>
+<h3 align="center">AI-Powered PR Triage for Maintainers & Enterprise Teams</h3>
 
 <p align="center">
-  <em>"3,100 PRs. Which ones should I merge?"</em>
+  <em>"Too many open PRs. Which ones should I review and merge first?"</em>
 </p>
 
 <p align="center">
@@ -33,7 +33,19 @@ Existing tools review code (CodeRabbit, Greptile, Copilot). None answer the main
 - **"Does this PR align with our roadmap?"**
 - **"Show me the top 10 PRs I should review today."**
 
-Code Review ≠ PR Triage. Treliq fills the gap.
+**Code Review ≠ PR Triage. Treliq fills the gap.**
+
+### 🎯 Who is this for?
+- **Enterprise Engineering Teams:** Weekly release cut-offs approaching? Stop guessing which 20 PRs to merge. Treliq prioritizes bug fixes, high test coverage, and small diffs.
+- **Open Source Maintainers:** Drowning in open PRs from random contributors? Automatically detect duplicate attempts, filter out spam, and prioritize trusted contributors.
+- **Platform/DevOps Teams:** Run Treliq as a central server across multiple internal repositories and provide a unified PR dashboard for the whole company.
+
+### ⚡ Zero Setup / Free Mode
+Not ready to trust your codebase with an LLM? Try the 100% free, local heuristic engine with zero API keys required.
+```bash
+# Score PRs based on 20 signals (CI, coverage, conflicts, etc.) completely locally
+npx treliq scan -r owner/repo --no-llm
+```
 
 ## What's New in v0.5.1
 
