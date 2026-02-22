@@ -479,9 +479,8 @@ program
     }
     const scanner = new TreliqScanner(config);
     const result = await scanner.scan();
-    outputResult(result, config.outputFormat);
 
-    // Issue scanning (if --include-issues)
+    // Issue scanning (if --include-issues) — must run BEFORE output
     if (opts.includeIssues) {
       const { IssueScanner } = await import('./core/issue-scanner');
       const issueScanner = new IssueScanner({
@@ -493,8 +492,11 @@ program
       const scoredIssues = await issueScanner.scan(result.rankedPRs);
       result.rankedIssues = scoredIssues;
       result.totalIssues = scoredIssues.length;
-      console.log(`\n📋 ${scoredIssues.length} issues scanned.`);
+      // Feed ranked issues back to scanner for semantic matching
+      scanner.setRankedIssues(scoredIssues);
     }
+
+    outputResult(result, config.outputFormat);
 
     // Auto-actions
     const hasAutoActions = opts.autoCloseDupes || opts.autoCloseSpam || opts.autoMerge || opts.autoLabelIntent;
