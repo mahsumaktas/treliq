@@ -75,6 +75,10 @@ export interface ScoredPR extends PRData {
   isSpam: boolean;
   spamReasons: string[];
   intent?: IntentCategory;
+  diffAnalysis?: DiffAnalysis;
+  semanticMatches?: SemanticMatch[];
+  holisticRank?: number;
+  adjustedScore?: number;
 }
 
 export type IntentCategory = 'bugfix' | 'feature' | 'refactor' | 'dependency' | 'docs' | 'chore';
@@ -106,6 +110,26 @@ export interface ScoredIssue extends IssueData {
   duplicateGroup?: number;
   isSpam: boolean;
   spamReasons: string[];
+  semanticMatches?: SemanticMatch[];
+  holisticRank?: number;
+  adjustedScore?: number;
+}
+
+export interface DiffAnalysis {
+  prNumber: number;
+  codeQuality: number;        // 0-100
+  riskAssessment: 'low' | 'medium' | 'high' | 'critical';
+  changeType: 'additive' | 'modifying' | 'removing' | 'mixed';
+  affectedAreas: string[];
+  summary: string;
+}
+
+export interface SemanticMatch {
+  prNumber: number;
+  issueNumber: number;
+  matchQuality: 'full' | 'partial' | 'unrelated' | 'unchecked';
+  confidence: number;
+  reason: string;
 }
 
 export type TriageItem = ScoredPR | ScoredIssue;
