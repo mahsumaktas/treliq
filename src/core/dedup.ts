@@ -36,7 +36,7 @@ export class DedupEngine {
     }
   }
 
-  async findDuplicates(items: TriageItem[], cc?: ConcurrencyController): Promise<DedupCluster[]> {
+  async findDuplicates(items: TriageItem[], cc?: ConcurrencyController, verifyWithLLM = false): Promise<DedupCluster[]> {
     if (items.length < 2) return [];
 
     // 1. Embed all items — batch first, parallel individual fallback
@@ -177,6 +177,11 @@ export class DedupEngine {
       });
     }
 
+    // 5. LLM Verification (optional)
+    if (verifyWithLLM && typeof this.provider.generateText === 'function') {
+      return this.verifyClusters(clusters, itemMap);
+    }
+
     return clusters;
   }
 
@@ -202,5 +207,129 @@ export class DedupEngine {
     const denom = Math.sqrt(normA) * Math.sqrt(normB);
     if (denom === 0) return 0;
     return dot / denom;
+  }
+
+  private async verifyClusters(
+    clusters: DedupCluster[],
+    itemMap: Map<number, TriageItem>
+  ): Promise<DedupCluster[]> {
+    // Verify largest clusters first, max 20
+    const sorted = [...clusters].sort((a, b) => b.prs.length - a.prs.length);
+    const toVerify = sorted.slice(0, 20);
+    const unverified = sorted.slice(20);
+
+    const verified: DedupCluster[] = [...unverified];
+
+    for (const cluster of toVerify) {
+      try {
+        const result = await this.verifyCluster(cluster);
+        if (result) {
+          verified.push(...result);
+        }
+        // If null, cluster dissolved (not duplicate)
+      } catch (err) {
+        log.warn({ clusterId: cluster.id, err }, 'Cluster verification failed, keeping original');
+        verified.push(cluster);
+      }
+    }
+
+    // Re-number cluster IDs
+    for (let i = 0; i < verified.length; i++) {
+      verified[i].id = i;
+      for (const item of verified[i].prs) {
+        item.duplicateGroup = i;
+      }
+    }
+
+    return verified;
+  }
+
+  private async verifyCluster(cluster: DedupCluster): Promise<DedupCluster[] | null> {
+    const itemDescriptions = cluster.prs.map(item => {
+      const type = 'changedFiles' in item ? 'PR' : 'Issue';
+      return `#${item.number} [${type}]: "${item.title}"`;
+    }).join('\n');
+
+    // Step 1: Verify
+    const verifyPrompt = `These items were detected as potential duplicates based on text similarity.
+Are they actually duplicates (solving the same problem)?
+
+${itemDescriptions}
+
+Return JSON: {"isDuplicate": true/false, "reason": "<brief>", "subgroups": [[num1, num2], [num3]] or []}`;
+
+    const verifyText = await this.provider.generateText(verifyPrompt, { temperature: 0.1, maxTokens: 200 });
+    const verifyMatch = verifyText.match(/\{[\s\S]*\}/);
+    if (!verifyMatch) return [cluster]; // Can't parse -> keep original
+
+    let verifyResult: { isDuplicate: boolean; reason: string; subgroups: number[][] };
+    try {
+      verifyResult = JSON.parse(verifyMatch[0]);
+    } catch {
+      return [cluster];
+    }
+
+    if (!verifyResult.isDuplicate) {
+      // Dissolve cluster
+      for (const item of cluster.prs) {
+        item.duplicateGroup = undefined;
+      }
+      return null;
+    }
+
+    // Handle subgroups
+    if (verifyResult.subgroups && verifyResult.subgroups.length > 0) {
+      const subClusters: DedupCluster[] = [];
+      for (const group of verifyResult.subgroups) {
+        if (group.length < 2) continue;
+        const items = group.map(n => cluster.prs.find(p => p.number === n)).filter(Boolean) as TriageItem[];
+        if (items.length < 2) continue;
+
+        const best = await this.selectBest(items);
+        subClusters.push({
+          id: 0, // Re-numbered later
+          prs: items,
+          bestPR: best,
+          similarity: cluster.similarity,
+          reason: `LLM verified: ${verifyResult.reason}`,
+          type: cluster.type,
+        });
+      }
+      return subClusters.length > 0 ? subClusters : null;
+    }
+
+    // Step 2: Select best
+    const best = await this.selectBest(cluster.prs);
+    cluster.bestPR = best;
+    cluster.reason = `LLM verified: ${verifyResult.reason}`;
+    return [cluster];
+  }
+
+  private async selectBest(items: TriageItem[]): Promise<number> {
+    const scoreBased = items.reduce((a, b) => a.totalScore >= b.totalScore ? a : b);
+
+    try {
+      const descriptions = items.map(item => `#${item.number}: "${item.title}" (score: ${item.totalScore})`).join('\n');
+      const prompt = `Which of these duplicate items is the best to keep and why?
+Consider: completeness, quality, test coverage.
+
+${descriptions}
+
+Return JSON: {"bestPR": <number>, "reason": "<brief>"}`;
+
+      const text = await this.provider.generateText(prompt, { temperature: 0.1, maxTokens: 100 });
+      const match = text.match(/\{[^}]+\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        const candidate = Number(parsed.bestPR);
+        if (items.some(p => p.number === candidate)) {
+          return candidate;
+        }
+      }
+    } catch (err) {
+      log.warn({ err }, 'LLM best selection failed, using score-based');
+    }
+
+    return scoreBased.number;
   }
 }
