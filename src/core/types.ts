@@ -123,8 +123,10 @@ export interface TreliqResult {
   repo: string;
   scannedAt: string;
   totalPRs: number;
+  totalIssues?: number;
   spamCount: number;
   duplicateClusters: DedupCluster[];
   rankedPRs: ScoredPR[];       // Sorted by totalScore desc
+  rankedIssues?: ScoredIssue[];
   summary: string;
 }

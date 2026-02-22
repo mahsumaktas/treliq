@@ -325,7 +325,7 @@ function outputScoredPR(scored: ScoredPR, format: string) {
 program
   .name('treliq')
   .description('AI-Powered PR Triage for Maintainers & Enterprise Teams')
-  .version('0.6.0');
+  .version('0.7.0');
 
 program
   .command('init')
@@ -491,9 +491,8 @@ program
         provider: config.provider,
       });
       const scoredIssues = await issueScanner.scan(result.rankedPRs);
-      // TODO(Task-11): Remove as-any casts when TreliqResult is updated
-      (result as any).rankedIssues = scoredIssues;
-      (result as any).totalIssues = scoredIssues.length;
+      result.rankedIssues = scoredIssues;
+      result.totalIssues = scoredIssues.length;
       console.log(`\n📋 ${scoredIssues.length} issues scanned.`);
     }
 
@@ -513,8 +512,7 @@ program
 
         // Collect all items for action planning
         const allItems: import('./core/types').TriageItem[] = [...result.rankedPRs];
-        // TODO(Task-11): Remove as-any cast when TreliqResult is updated
-        if ((result as any).rankedIssues) allItems.push(...(result as any).rankedIssues);
+        if (result.rankedIssues) allItems.push(...result.rankedIssues);
 
         const actions: import('./core/actions').ActionItem[] = [];
         if (opts.autoCloseDupes) actions.push(...engine.planCloseDuplicates(allItems, result.duplicateClusters));
