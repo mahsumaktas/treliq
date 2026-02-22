@@ -92,7 +92,12 @@ describe('RetryableProvider', () => {
   });
 
   it('returns undefined for generateEmbeddingBatch when inner does not support it', () => {
-    const provider = new RetryableProvider(mock);
+    const noBatchProvider = {
+      name: 'no-batch',
+      generateText: jest.fn(),
+      generateEmbedding: jest.fn(),
+    };
+    const provider = new RetryableProvider(noBatchProvider as any);
     expect(provider.generateEmbeddingBatch).toBeUndefined();
   });
 
