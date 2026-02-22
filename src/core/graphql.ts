@@ -5,7 +5,7 @@
  * reducing API call count by ~80% per scan.
  */
 
-import type { PRData } from './types';
+import type { PRData, IssueData } from './types';
 
 // ─── Issue Reference Patterns (shared with scanner) ───
 
@@ -157,6 +157,56 @@ export const SINGLE_PR_QUERY = `
   }
 `;
 
+// ─── Issue GraphQL Queries ───
+
+/**
+ * Lightweight issue list query — for cache comparison only.
+ * Fetches number, updatedAt for each open issue.
+ */
+export const ISSUE_LIST_QUERY = `
+  query($owner: String!, $repo: String!, $first: Int!, $after: String) {
+    repository(owner: $owner, name: $repo) {
+      issues(first: $first, after: $after, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          number
+          updatedAt
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Full issue details query — fetches all fields needed for scoring in one call.
+ */
+export const ISSUE_DETAILS_QUERY = `
+  query($owner: String!, $repo: String!, $first: Int!, $after: String) {
+    repository(owner: $owner, name: $repo) {
+      issues(first: $first, after: $after, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          number
+          title
+          body
+          createdAt
+          updatedAt
+          author { login }
+          authorAssociation
+          labels(first: 50) { nodes { name } }
+          milestone { title }
+          comments { totalCount }
+          reactions { totalCount }
+          state
+          stateReason
+          locked
+          assignees(first: 20) { nodes { login } }
+        }
+      }
+    }
+  }
+`;
+
 // ─── GraphQL Mergeable Enum → PRData Mapping ───
 
 const GRAPHQL_MERGEABLE_MAP: Record<string, PRData['mergeable']> = {
@@ -258,4 +308,28 @@ export function mapGraphQLToPRData(node: any, owner: string, repo: string): { pr
   };
 
   return { pr, headSha };
+}
+
+/**
+ * Maps a GraphQL Issue node to the IssueData interface.
+ */
+export function mapGraphQLToIssueData(node: any): IssueData {
+  return {
+    number: node.number,
+    title: node.title,
+    body: node.body ?? '',
+    author: node.author?.login ?? 'unknown',
+    authorAssociation: node.authorAssociation ?? 'NONE',
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    labels: (node.labels?.nodes ?? []).map((l: any) => l.name),
+    milestone: node.milestone?.title ?? undefined,
+    commentCount: node.comments?.totalCount ?? 0,
+    reactionCount: node.reactions?.totalCount ?? 0,
+    state: node.state?.toLowerCase() as 'open' | 'closed',
+    stateReason: node.stateReason ?? null,
+    isLocked: node.locked ?? false,
+    assignees: (node.assignees?.nodes ?? []).map((a: any) => a.login),
+    linkedPRs: [],
+  };
 }
