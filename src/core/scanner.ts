@@ -6,9 +6,11 @@
 import { Octokit } from '@octokit/rest';
 import { graphql } from '@octokit/graphql';
 import type { TreliqConfig, PRData, ScoredPR, TreliqResult, DedupCluster } from './types';
+import type { LLMProvider } from './provider';
 import { ScoringEngine } from './scoring';
 import { DedupEngine } from './dedup';
 import { VisionChecker } from './vision';
+import { RetryableProvider } from './retryable-provider';
 import { loadCache, saveCache, getCacheHit, configHash, type PRListItem } from './cache';
 import { getReputation } from './reputation';
 import { TreliqDB } from './db';
@@ -46,6 +48,7 @@ export class TreliqScanner {
   private octokit: Octokit;
   private graphqlClient: typeof graphql;
   private rateLimit: RateLimitManager;
+  private wrappedProvider?: LLMProvider;
   scoring: ScoringEngine;
   public shaMap = new Map<number, string>();
   private db?: TreliqDB;
@@ -57,7 +60,9 @@ export class TreliqScanner {
       headers: { authorization: `token ${config.token}` },
     });
     this.rateLimit = new RateLimitManager();
-    this.scoring = new ScoringEngine(config.provider, config.trustContributors);
+    const wrappedProvider = config.provider ? new RetryableProvider(config.provider) : undefined;
+    this.wrappedProvider = wrappedProvider;
+    this.scoring = new ScoringEngine(wrappedProvider, config.trustContributors, 10);
     if (config.dbPath) {
       this.db = new TreliqDB(config.dbPath);
     }
@@ -151,42 +156,49 @@ export class TreliqScanner {
 
     log.info({ cached: fromCache, reScored }, 'Scoring complete');
 
-    // 3. Dedup
+    // 3. Dedup + Vision — run in parallel (they are independent)
     let clusters: DedupCluster[] = [];
-    if (this.config.provider) {
+
+    const dedupPromise = (async (): Promise<DedupCluster[]> => {
+      if (!this.wrappedProvider) {
+        log.info('Skipping dedup (no LLM provider)');
+        return [];
+      }
       try {
-        log.info('Finding duplicates via embeddings');
+        // Only embed PRs that don't already have embeddings (from cache)
+        const needsEmbedding = scored.filter(p => !p.embedding);
+        if (needsEmbedding.length < scored.length) {
+          log.info({ cached: scored.length - needsEmbedding.length }, 'Skipping cached embeddings');
+        }
+        log.info({ count: scored.length, newEmbeddings: needsEmbedding.length }, 'Finding duplicates via embeddings');
         const dedup = new DedupEngine(
           this.config.duplicateThreshold,
           this.config.relatedThreshold,
-          this.config.provider,
+          this.wrappedProvider,
         );
-        clusters = await dedup.findDuplicates(scored);
-        log.info({ clusters: clusters.length }, 'Found duplicate clusters');
+        const c = await dedup.findDuplicates(scored);
+        log.info({ clusters: c.length }, 'Found duplicate clusters');
+        return c;
       } catch (err: any) {
         log.warn({ err }, 'Dedup failed (skipping)');
+        return [];
       }
-    } else {
-      log.info('Skipping dedup (no LLM provider)');
-    }
+    })();
 
-    // 4. Vision check
-    if (this.config.provider) {
+    const visionPromise = (async () => {
+      if (!this.wrappedProvider) return;
       try {
-        log.info('Checking vision alignment');
         const visionDoc = await this.fetchVisionDoc(owner, repo);
         if (visionDoc) {
-          const vision = new VisionChecker(visionDoc, this.config.provider);
-          for (const pr of scored) {
-            try {
-              const result = await vision.check(pr);
-              pr.visionAlignment = result.alignment;
-              pr.visionScore = result.score;
-              pr.visionReason = result.reason;
-            } catch (err: any) {
-              log.warn({ pr: pr.number, err }, 'Vision check failed for PR');
-              pr.visionAlignment = 'unchecked';
-            }
+          // Only check PRs that don't have vision results yet (from cache)
+          const needsVision = scored.filter(p => p.visionAlignment === 'unchecked');
+          if (needsVision.length < scored.length) {
+            log.info({ cached: scored.length - needsVision.length }, 'Skipping cached vision results');
+          }
+          if (needsVision.length > 0) {
+            log.info({ count: needsVision.length }, 'Checking vision alignment (parallel)');
+            const vision = new VisionChecker(visionDoc, this.wrappedProvider);
+            await vision.checkMany(needsVision);
           }
         } else {
           log.info('No VISION.md or ROADMAP.md found, skipping');
@@ -194,7 +206,9 @@ export class TreliqScanner {
       } catch (err: any) {
         log.warn({ err }, 'Vision check failed (skipping)');
       }
-    }
+    })();
+
+    [clusters] = await Promise.all([dedupPromise, visionPromise]);
 
     // Sort by score desc
     scored.sort((a, b) => b.totalScore - a.totalScore);
