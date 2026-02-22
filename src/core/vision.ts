@@ -51,8 +51,8 @@ Respond with EXACTLY one JSON object (no markdown):
   }
 
   /** Check multiple PRs in parallel with concurrency control */
-  async checkMany(prs: ScoredPR[], maxConcurrent = 10): Promise<void> {
-    const cc = new ConcurrencyController(maxConcurrent, 2, 1000);
+  async checkMany(prs: ScoredPR[], cc?: ConcurrencyController): Promise<void> {
+    cc = cc ?? new ConcurrencyController(10, 2, 1000);
 
     const results = await Promise.allSettled(
       prs.map(pr => cc.execute(async () => {

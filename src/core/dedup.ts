@@ -36,7 +36,7 @@ export class DedupEngine {
     }
   }
 
-  async findDuplicates(prs: ScoredPR[]): Promise<DedupCluster[]> {
+  async findDuplicates(prs: ScoredPR[], cc?: ConcurrencyController): Promise<DedupCluster[]> {
     if (prs.length < 2) return [];
 
     // 1. Embed all PRs — batch first, parallel individual fallback
@@ -66,13 +66,14 @@ export class DedupEngine {
     }
 
     // For PRs without embedding (batch failed or no batch support): parallel individual
+    // If an external ConcurrencyController is provided, use it (enables adaptive throttling)
     if (!batchDone) {
       const remaining = prs.filter(p => !p.embedding);
       if (remaining.length > 0) {
         log.info({ count: remaining.length }, 'Embedding PRs individually (parallel)');
-        const cc = new ConcurrencyController(15, 2, 500);
+        const controller = cc ?? new ConcurrencyController(15, 2, 500);
         const results = await Promise.allSettled(
-          remaining.map(pr => cc.execute(async () => {
+          remaining.map(pr => controller.execute(async () => {
             const text = this.prToText(pr);
             const embedding = await this.embed(text);
             pr.embedding = embedding;

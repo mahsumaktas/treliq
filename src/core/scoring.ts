@@ -28,7 +28,7 @@ export class ScoringEngine {
   /** Score multiple PRs in parallel with concurrency control */
   async scoreMany(prs: PRData[]): Promise<ScoredPR[]> {
     if (prs.length === 0) return [];
-    log.info({ count: prs.length, maxConcurrent: 5 }, 'Scoring PRs');
+    log.info({ count: prs.length, maxConcurrent: this.concurrency.getMaxConcurrent() }, 'Scoring PRs');
 
     const results = await Promise.allSettled(
       prs.map(pr => this.concurrency.execute(() => this.score(pr)))

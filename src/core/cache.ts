@@ -67,7 +67,7 @@ export function saveCache(
       scoredPR: pr,
     };
   }
-  writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
+  writeFileSync(cacheFile, JSON.stringify(cache));
 }
 
 export interface PRListItem {

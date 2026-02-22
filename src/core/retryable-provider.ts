@@ -58,9 +58,7 @@ export class RetryableProvider implements LLMProvider {
         if (status === 429) {
           this.onThrottle?.();
           const retryAfter = err.retryAfter;
-          if (typeof retryAfter === 'number' && retryAfter < 1) {
-            delay = retryAfter * 1000;
-          } else if (typeof retryAfter === 'number') {
+          if (typeof retryAfter === 'number') {
             delay = retryAfter * 1000;
           } else {
             delay = this.baseDelay * Math.pow(2, attempt);
@@ -72,6 +70,8 @@ export class RetryableProvider implements LLMProvider {
         }
 
         delay = Math.min(delay, this.maxDelay);
+        // Add jitter (50-100% of delay) to prevent thundering herd
+        delay = delay * (0.5 + Math.random() * 0.5);
         await new Promise(r => setTimeout(r, delay));
       }
     }

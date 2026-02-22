@@ -11,6 +11,7 @@ import { ScoringEngine } from './scoring';
 import { DedupEngine } from './dedup';
 import { VisionChecker } from './vision';
 import { RetryableProvider } from './retryable-provider';
+import { ConcurrencyController } from './concurrency';
 import { loadCache, saveCache, getCacheHit, configHash, type PRListItem } from './cache';
 import { getReputation } from './reputation';
 import { TreliqDB } from './db';
@@ -49,6 +50,8 @@ export class TreliqScanner {
   private graphqlClient: typeof graphql;
   private rateLimit: RateLimitManager;
   private wrappedProvider?: LLMProvider;
+  private dedupCC: ConcurrencyController;
+  private visionCC: ConcurrencyController;
   scoring: ScoringEngine;
   public shaMap = new Map<number, string>();
   private db?: TreliqDB;
@@ -60,7 +63,15 @@ export class TreliqScanner {
       headers: { authorization: `token ${config.token}` },
     });
     this.rateLimit = new RateLimitManager();
-    const wrappedProvider = config.provider ? new RetryableProvider(config.provider) : undefined;
+    this.dedupCC = new ConcurrencyController(15, 2, 500);
+    this.visionCC = new ConcurrencyController(10, 2, 1000);
+    const wrappedProvider = config.provider ? new RetryableProvider(config.provider, {
+      onThrottle: () => {
+        this.dedupCC.throttle();
+        this.visionCC.throttle();
+        log.info({ dedup: this.dedupCC.getMaxConcurrent(), vision: this.visionCC.getMaxConcurrent() }, 'Throttled concurrency on 429');
+      },
+    }) : undefined;
     this.wrappedProvider = wrappedProvider;
     this.scoring = new ScoringEngine(wrappedProvider, config.trustContributors, 10);
     if (config.dbPath) {
@@ -156,7 +167,9 @@ export class TreliqScanner {
 
     log.info({ cached: fromCache, reScored }, 'Scoring complete');
 
-    // 3. Dedup + Vision — run in parallel (they are independent)
+    // 3. Dedup + Vision — run in parallel (they write disjoint property sets)
+    // IMPORTANT: dedup writes {embedding, duplicateGroup}, vision writes {visionAlignment, visionScore, visionReason}.
+    // These property sets MUST remain disjoint for safe parallel mutation on shared ScoredPR objects.
     let clusters: DedupCluster[] = [];
 
     const dedupPromise = (async (): Promise<DedupCluster[]> => {
@@ -176,7 +189,7 @@ export class TreliqScanner {
           this.config.relatedThreshold,
           this.wrappedProvider,
         );
-        const c = await dedup.findDuplicates(scored);
+        const c = await dedup.findDuplicates(scored, this.dedupCC);
         log.info({ clusters: c.length }, 'Found duplicate clusters');
         return c;
       } catch (err: any) {
@@ -191,14 +204,15 @@ export class TreliqScanner {
         const visionDoc = await this.fetchVisionDoc(owner, repo);
         if (visionDoc) {
           // Only check PRs that don't have vision results yet (from cache)
-          const needsVision = scored.filter(p => p.visionAlignment === 'unchecked');
+          // Include undefined for backwards compatibility with old cache entries
+          const needsVision = scored.filter(p => p.visionAlignment === 'unchecked' || p.visionAlignment === undefined);
           if (needsVision.length < scored.length) {
             log.info({ cached: scored.length - needsVision.length }, 'Skipping cached vision results');
           }
           if (needsVision.length > 0) {
             log.info({ count: needsVision.length }, 'Checking vision alignment (parallel)');
             const vision = new VisionChecker(visionDoc, this.wrappedProvider);
-            await vision.checkMany(needsVision);
+            await vision.checkMany(needsVision, this.visionCC);
           }
         } else {
           log.info('No VISION.md or ROADMAP.md found, skipping');
