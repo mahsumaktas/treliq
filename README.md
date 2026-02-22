@@ -23,7 +23,7 @@
 
 ---
 
-Treliq is an intelligent triage system that **deduplicates, scores, and ranks** pull requests and issues so maintainers can focus on what matters. Auto-close duplicates, auto-merge high-quality PRs, and auto-label by intent. Available as a **CLI tool**, **persistent server with REST API**, and **GitHub Action**.
+Treliq is an intelligent triage system that **deduplicates, scores, and ranks** pull requests and issues so maintainers can focus on what matters. Diff-aware code analysis, semantic issue-PR matching, tournament-style holistic re-ranking, auto-close duplicates, auto-merge high-quality PRs, and auto-label by intent. Available as a **CLI tool**, **persistent server with REST API**, and **GitHub Action**.
 
 ## The Problem
 
@@ -54,18 +54,24 @@ npx treliq scan -r owner/repo --no-llm --include-issues
 
 ## What's New in v0.7.0
 
-### Accuracy Pipeline (5 New Features)
+### Accuracy Pipeline (5 New Stages)
 Code-aware, semantically intelligent scoring — goes beyond metadata to analyze actual diffs:
 
-| Feature | What it does |
-|---------|-------------|
-| **Diff-Aware Scoring** | Fetches PR diffs, LLM analyzes code quality/risk/change type. New blend: 0.4 heuristic + 0.3 LLM text + 0.3 LLM diff |
-| **Intent-Aware Profiles** | 6 hardcoded weight profiles (bugfix, feature, refactor, dependency, docs, chore) adjust signal weights per intent |
-| **LLM Dedup Verification** | After embedding clusters, LLM verifies "are these really duplicates?" with subgroup splitting. Max 20 clusters |
-| **Issue-PR Semantic Matching** | LLM determines if a PR actually resolves its referenced issue. Bidirectional score impact |
-| **Holistic Re-ranking** | Tournament-style: groups of 50 → top 10 per group → final top 15. Cross-item comparison |
+| Stage | What it does |
+|-------|-------------|
+| **Diff-Aware Scoring** | Fetches PR diffs via GitHub API, LLM analyzes code quality (0-100), risk assessment, change type, and affected areas. New 3-way blend: `0.4 heuristic + 0.3 LLM text + 0.3 LLM diff` |
+| **Intent-Aware Profiles** | 6 weight profiles (bugfix, feature, refactor, dependency, docs, chore) automatically adjust signal weights. Bugfix PRs boost CI/test weights; docs PRs reduce them. Weights normalized to sum=1.0 |
+| **LLM Dedup Verification** | After embedding clusters, LLM verifies "are these really duplicates?" with subgroup splitting. Dissolves false positives, splits mixed clusters, selects best item per group. Max 20 clusters |
+| **Issue-PR Semantic Matching** | Compares issue body + PR diff via LLM. Match quality: full/partial/unrelated. Bidirectional: PRs get +8/+3/-5 bonus, issues get linked_pr signal update (95/70/40) |
+| **Holistic Re-ranking** | Tournament-style cross-item comparison: groups of 50 → LLM picks top 10 per group → finalists → top 15. Rank bonus: #1 gets +30 points, #15 gets +2 |
 
-All features are LLM-optional — `--no-llm` skips all new stages.
+All stages are LLM-optional — `--no-llm` mode uses pure heuristic scoring with zero API calls.
+
+**Full pipeline flow:**
+```
+Fetch PRs → Score (21 signals + intent profiles) → Diff Analysis → LLM Blend
+→ Dedup (embeddings + LLM verify) → Vision Check → Semantic Matching → Holistic Re-rank → Output
+```
 
 ### Intent Classification (Signal #21)
 3-tier detection pipeline classifies every PR and issue into one of 6 categories:
@@ -109,12 +115,13 @@ npx treliq scan -r owner/repo --auto-close-dupes --auto-close-spam --auto-merge 
 
 Safety: **dry-run by default**, `--confirm` required for execution, batch limit 50, `--exclude` list, stale state re-check before each action.
 
-### Test Suite (384 tests)
-- 140 new tests across 28 test suites
-- Accuracy pipeline: DiffAnalyzer (7), IntentProfiles (8), DedupVerification (6), SemanticMatcher (7), HolisticRanker (7), Scoring blend (4)
-- Unit tests: IntentClassifier (24), ActionEngine (18), ActionExecutor (18), IssueScoringEngine (14), IssueScanner (6), Issue GraphQL (5), cross-type dedup (4), intent signal (6)
-- Integration tests: Issue CRUD in SQLite (5), scoring engine pipeline
-- Test fixtures: `createIssueData()`, `createScoredIssue()` factories
+### Test Suite (384 tests, 28 suites)
+
+| Category | Tests | Suites |
+|----------|-------|--------|
+| **Accuracy pipeline** | 39 | DiffAnalyzer (7), IntentProfiles (8), DedupVerification (6), SemanticMatcher (7), HolisticRanker (7), Scoring blend (4) |
+| **Intent & issue triage** | 71 | IntentClassifier (24), IssueScoringEngine (14), ActionEngine (18), ActionExecutor (18), IssueScanner (6), Issue GraphQL (5), cross-type dedup (4), intent signal (6) |
+| **Core scoring & pipeline** | 274 | 21-signal scoring, concurrency, rate limiting, caching, batch embedding, dedup, vision, webhooks, auth, config, DB |
 
 ---
 
@@ -148,9 +155,8 @@ Full rewrite of the scan pipeline for large-scale repos (1000+ PRs). First scan 
 - Incremental scans skip re-embedding and re-checking cached PRs
 - Compact JSON format (no pretty-print) reduces cache file size
 
-### Test Suite (384 tests)
-- 28 test suites, 384/384 passing
-- Accuracy pipeline: DiffAnalyzer, IntentProfiles, DedupVerification, SemanticMatcher, HolisticRanker
+### Test Suite (244 tests)
+- 17 test suites, 244/244 passing
 - RetryableProvider, batch embedding, adaptive concurrency, parallel dedup/vision, expanded cache
 
 ---
@@ -264,8 +270,11 @@ graph TB
         IScore[12-Signal Issue Scoring]
         Intent[Intent Classifier]
         LLM[Multi-Provider LLM<br/>Gemini · OpenAI · Anthropic · OpenRouter]
-        Dedup[Cross-type Dedup<br/>LanceDB]
+        Diff[Diff Analyzer<br/>Code Quality · Risk]
+        Dedup[Cross-type Dedup<br/>LanceDB + LLM Verify]
         Vision[Vision Doc Alignment]
+        Semantic[Semantic Matcher<br/>Issue-PR Resolution]
+        Holistic[Holistic Ranker<br/>Tournament Re-ranking]
         Actions[Action Engine<br/>close · merge · label]
         Executor[Action Executor]
     end
@@ -297,8 +306,16 @@ graph TB
     IScore --> Intent
     Scoring --> LLM
     IScore --> LLM
+    Scanner --> Diff
+    Diff --> LLM
+    Diff --> Scoring
     Scanner & IScan --> Dedup
+    Dedup --> LLM
     Scanner --> Vision
+    Semantic --> LLM
+    Scanner & IScan --> Semantic
+    Scanner & IScan --> Holistic
+    Holistic --> LLM
     Scoring & IScore --> SQLite
     Actions --> Executor
     Executor --> GH_REST
@@ -514,9 +531,9 @@ jobs:
 | 18 | Breaking Change | 0.04 | Risky files, large deletions, `!:` in title |
 | 19 | Scope Coherence | 0.06 | Directory spread, title-to-files alignment |
 | 20 | PR Complexity | 0.05 | Size analysis, AI detection, overengineering |
-| 21 | **Intent** | 0.08 | bugfix/feature/refactor/dependency/docs/chore classification |
+| 21 | **Intent** | 0.15 | bugfix/feature/refactor/dependency/docs/chore classification |
 
-When an LLM provider is configured, a **quality score** (0–100) is blended at **60% LLM / 40% heuristic**.
+When an LLM provider is configured, scores are blended: **40% heuristic + 30% LLM text + 30% LLM diff** (with diff analysis) or **40% heuristic + 60% LLM** (without diff). Intent-aware profiles automatically adjust signal weights based on PR category (e.g., bugfix PRs boost CI/test weights).
 
 ### 12-Signal Issue Scoring
 
