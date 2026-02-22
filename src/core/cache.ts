@@ -12,7 +12,7 @@ const log = createLogger('cache');
 export interface CachedPR {
   updatedAt: string;
   headSha: string;
-  scoredPR: Omit<ScoredPR, 'embedding'>;
+  scoredPR: ScoredPR;
 }
 
 export interface TreliqCache {
@@ -61,11 +61,10 @@ export function saveCache(
     prs: {},
   };
   for (const pr of scored) {
-    const { embedding, ...rest } = pr;
     cache.prs[String(pr.number)] = {
       updatedAt: pr.updatedAt,
       headSha: shaMap.get(pr.number) ?? '',
-      scoredPR: rest,
+      scoredPR: pr,
     };
   }
   writeFileSync(cacheFile, JSON.stringify(cache, null, 2));

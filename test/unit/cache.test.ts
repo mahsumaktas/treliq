@@ -144,7 +144,7 @@ describe('cache', () => {
       expect(cache?.configHash).toBe('hash123');
     });
 
-    it('stores PR data without embedding', () => {
+    it('stores PR data with embedding preserved', () => {
       const scoredPR = createScoredPR({
         number: 1,
         embedding: [1, 2, 3, 4, 5],
@@ -156,8 +156,7 @@ describe('cache', () => {
       const cache = loadCache(testCacheFile, 'owner/repo');
       expect(cache).not.toBeNull();
       expect(cache?.prs['1']).toBeDefined();
-      // embedding is stripped by Omit<ScoredPR, 'embedding'> type
-      expect('embedding' in (cache?.prs['1'].scoredPR ?? {})).toBe(false);
+      expect(cache?.prs['1'].scoredPR.embedding).toEqual([1, 2, 3, 4, 5]);
     });
 
     it('stores headSha from shaMap', () => {
@@ -285,6 +284,67 @@ describe('cache', () => {
 
       const hit = getCacheHit(cache, item);
       expect(hit).toBeNull();
+    });
+  });
+
+  describe('expanded cache (embedding + vision)', () => {
+    it('saves and restores embedding data', () => {
+      const scoredPR = createScoredPR({
+        number: 1,
+        updatedAt: '2024-01-01T00:00:00Z',
+        embedding: [0.1, 0.2, 0.3],
+      });
+      const shaMap = new Map([[1, 'sha1']]);
+
+      saveCache(testCacheFile, 'owner/repo', [scoredPR], shaMap, 'hash1');
+      const cache = loadCache(testCacheFile, 'owner/repo', 'hash1');
+      const item: PRListItem = { number: 1, updatedAt: '2024-01-01T00:00:00Z', headSha: 'sha1' };
+      const hit = getCacheHit(cache!, item);
+
+      expect(hit?.embedding).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('saves and restores vision data', () => {
+      const scoredPR = createScoredPR({
+        number: 1,
+        updatedAt: '2024-01-01T00:00:00Z',
+        visionAlignment: 'aligned',
+        visionScore: 88,
+        visionReason: 'Matches roadmap',
+      });
+      const shaMap = new Map([[1, 'sha1']]);
+
+      saveCache(testCacheFile, 'owner/repo', [scoredPR], shaMap, 'hash1');
+      const cache = loadCache(testCacheFile, 'owner/repo', 'hash1');
+      const item: PRListItem = { number: 1, updatedAt: '2024-01-01T00:00:00Z', headSha: 'sha1' };
+      const hit = getCacheHit(cache!, item);
+
+      expect(hit?.visionAlignment).toBe('aligned');
+      expect(hit?.visionScore).toBe(88);
+      expect(hit?.visionReason).toBe('Matches roadmap');
+    });
+
+    it('is backwards compatible with old cache format', () => {
+      const oldCache = {
+        repo: 'owner/repo',
+        lastScan: '2024-01-01T00:00:00Z',
+        configHash: 'hash1',
+        prs: {
+          '1': {
+            updatedAt: '2024-01-01T00:00:00Z',
+            headSha: 'sha1',
+            scoredPR: createScoredPR({ number: 1, updatedAt: '2024-01-01T00:00:00Z' }),
+          },
+        },
+      };
+      writeFileSync(testCacheFile, JSON.stringify(oldCache));
+
+      const cache = loadCache(testCacheFile, 'owner/repo', 'hash1');
+      const item: PRListItem = { number: 1, updatedAt: '2024-01-01T00:00:00Z', headSha: 'sha1' };
+      const hit = getCacheHit(cache!, item);
+
+      expect(hit).not.toBeNull();
+      expect(hit?.embedding).toBeUndefined();
     });
   });
 });
