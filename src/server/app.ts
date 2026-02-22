@@ -349,6 +349,41 @@ export async function createServer(config: ServerConfig): Promise<FastifyInstanc
     }
   );
 
+  /**
+   * GET /api/repos/:owner/:repo/issues - List issues for a repository
+   * Query params: limit, offset, sortBy, state
+   */
+  fastify.get<{ Params: RepoParams; Querystring: QueryParams }>(
+    '/api/repos/:owner/:repo/issues',
+    { schema: { params: repoParamSchema } },
+    async (request, reply) => {
+      const { owner, repo } = request.params;
+      const { limit, offset, sortBy, state } = request.query;
+
+      try {
+        const repoId = db.upsertRepository(owner, repo);
+        const issues = db.getIssues(repoId, {
+          limit: limit ? parseInt(limit, 10) : undefined,
+          offset: offset ? parseInt(offset, 10) : 0,
+          sortBy: sortBy || 'total_score DESC',
+          state: state,
+        });
+
+        return {
+          repo: `${owner}/${repo}`,
+          total: issues.length,
+          issues,
+        };
+      } catch (error: any) {
+        log.error({ repo: `${owner}/${repo}`, err: error }, 'Failed to list issues');
+        return reply.code(500).send({
+          error: 'Failed to list issues',
+          message: error.message,
+        });
+      }
+    }
+  );
+
   // ========== SSE Events Endpoint ==========
 
   /**
