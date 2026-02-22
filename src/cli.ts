@@ -492,8 +492,8 @@ program
       const scoredIssues = await issueScanner.scan(result.rankedPRs);
       result.rankedIssues = scoredIssues;
       result.totalIssues = scoredIssues.length;
-      // Feed ranked issues back to scanner for semantic matching
-      scanner.setRankedIssues(scoredIssues);
+      // Enrich with semantic matching + holistic re-ranking (PR-Issue pairs)
+      await scanner.enrichWithIssues(result, scoredIssues);
     }
 
     outputResult(result, config.outputFormat);

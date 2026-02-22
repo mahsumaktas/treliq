@@ -55,13 +55,85 @@ export class TreliqScanner {
   private wrappedProvider?: LLMProvider;
   private dedupCC: ConcurrencyController;
   private visionCC: ConcurrencyController;
+  private diffCC: ConcurrencyController;
   scoring: ScoringEngine;
   public shaMap = new Map<number, string>();
   private _rankedIssues?: ScoredIssue[];
+  private _lastScored?: ScoredPR[];
+  private _lastDiffMap?: Map<number, DiffAnalysis>;
   private db?: TreliqDB;
 
   setRankedIssues(issues: ScoredIssue[]): void {
     this._rankedIssues = issues;
+  }
+
+  /**
+   * Enrich scan result with issue data: semantic matching + holistic re-ranking.
+   * Must be called AFTER scan() so _lastScored and _lastDiffMap are available.
+   */
+  async enrichWithIssues(result: TreliqResult, issues: ScoredIssue[]): Promise<void> {
+    this._rankedIssues = issues;
+    const scored = this._lastScored;
+    const diffMap = this._lastDiffMap ?? new Map<number, DiffAnalysis>();
+
+    if (!scored || scored.length === 0) return;
+
+    // Semantic matching (PRs + Issues)
+    if (this.wrappedProvider && issues.length > 0) {
+      try {
+        const matcher = new SemanticMatcher(this.wrappedProvider);
+        const matchResult = await matcher.matchAll(scored, issues, diffMap);
+
+        for (const [prNum, bonus] of matchResult.prBonuses) {
+          const pr = scored.find(p => p.number === prNum);
+          if (pr) {
+            pr.totalScore = Math.max(0, Math.min(100, pr.totalScore + bonus));
+            pr.semanticMatches = matchResult.matches.filter(m => m.prNumber === prNum);
+          }
+        }
+
+        for (const [issueNum, score] of matchResult.issueScoreUpdates) {
+          const issue = issues.find(i => i.number === issueNum);
+          if (issue) {
+            const linkedSignal = issue.signals.find(s => s.name === 'has_linked_pr');
+            if (linkedSignal) linkedSignal.score = score;
+            issue.semanticMatches = matchResult.matches.filter(m => m.issueNumber === issueNum);
+          }
+        }
+
+        log.info({ matches: matchResult.matches.length }, 'Semantic matching complete (enrichWithIssues)');
+      } catch (err: any) {
+        log.warn({ err }, 'Semantic matching failed (skipping)');
+      }
+    }
+
+    // Holistic re-ranking (PRs + Issues together)
+    if (this.wrappedProvider) {
+      try {
+        const ranker = new HolisticRanker(this.wrappedProvider);
+        const allItems: TriageItem[] = [...scored, ...issues];
+        const rankings = await ranker.rank(allItems);
+
+        for (const [itemNumber, rank] of rankings) {
+          const pr = scored.find(p => p.number === itemNumber);
+          if (pr) {
+            pr.holisticRank = rank;
+            pr.adjustedScore = HolisticRanker.calculateAdjustedScore(pr.totalScore, rank);
+          }
+          const issue = issues.find(i => i.number === itemNumber);
+          if (issue) {
+            issue.holisticRank = rank;
+            issue.adjustedScore = HolisticRanker.calculateAdjustedScore(issue.totalScore, rank);
+          }
+        }
+        log.info({ ranked: rankings.size }, 'Holistic re-ranking complete (enrichWithIssues)');
+      } catch (err: any) {
+        log.warn({ err }, 'Holistic re-ranking failed (skipping)');
+      }
+    }
+
+    // Re-sort PRs by adjustedScore
+    scored.sort((a, b) => (b.adjustedScore ?? b.totalScore) - (a.adjustedScore ?? a.totalScore));
   }
 
   constructor(config: TreliqConfig) {
@@ -73,15 +145,18 @@ export class TreliqScanner {
     this.rateLimit = new RateLimitManager();
     this.dedupCC = new ConcurrencyController(15, 2, 500);
     this.visionCC = new ConcurrencyController(10, 2, 1000);
+    this.diffCC = new ConcurrencyController(3, 2, 500);
     const wrappedProvider = config.provider ? new RetryableProvider(config.provider, {
       onThrottle: () => {
         this.dedupCC.throttle();
         this.visionCC.throttle();
-        log.info({ dedup: this.dedupCC.getMaxConcurrent(), vision: this.visionCC.getMaxConcurrent() }, 'Throttled concurrency on 429');
+        this.scoring.throttle();
+        this.diffCC.throttle();
+        log.info({ dedup: this.dedupCC.getMaxConcurrent(), vision: this.visionCC.getMaxConcurrent(), scoring: this.scoring.concurrencyMax(), diff: this.diffCC.getMaxConcurrent() }, 'Throttled concurrency on 429');
       },
     }) : undefined;
     this.wrappedProvider = wrappedProvider;
-    this.scoring = new ScoringEngine(wrappedProvider, config.trustContributors, 10);
+    this.scoring = new ScoringEngine(wrappedProvider, config.trustContributors, 5);
     if (config.dbPath) {
       this.db = new TreliqDB(config.dbPath);
     }
@@ -181,7 +256,7 @@ export class TreliqScanner {
       try {
         const diffAnalyzer = new DiffAnalyzer(this.octokit, owner, repo, this.wrappedProvider);
         const prNumbers = scored.map(pr => pr.number);
-        const analyses = await diffAnalyzer.analyzeMany(prNumbers);
+        const analyses = await diffAnalyzer.analyzeMany(prNumbers, this.diffCC);
         for (const analysis of analyses) {
           diffMap.set(analysis.prNumber, analysis);
           const pr = scored.find(p => p.number === analysis.prNumber);
@@ -192,6 +267,10 @@ export class TreliqScanner {
         log.warn({ err }, 'Diff analysis failed (skipping)');
       }
     }
+
+    // Save for enrichWithIssues
+    this._lastScored = scored;
+    this._lastDiffMap = diffMap;
 
     // 3. Dedup + Vision — run in parallel (they write disjoint property sets)
     // IMPORTANT: dedup writes {embedding, duplicateGroup}, vision writes {visionAlignment, visionScore, visionReason}.

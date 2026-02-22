@@ -63,6 +63,16 @@ export class ScoringEngine {
     this.intentClassifier = new IntentClassifier(provider);
   }
 
+  /** Halve concurrency on rate-limit (429) */
+  throttle(): void {
+    this.concurrency.throttle();
+  }
+
+  /** Current max concurrency value */
+  concurrencyMax(): number {
+    return this.concurrency.getMaxConcurrent();
+  }
+
   setReputation(login: string, score: number) {
     this.reputationScores.set(login, score);
   }
@@ -159,6 +169,7 @@ export class ScoringEngine {
         llmRisk = llmResult.risk;
         llmReason = llmResult.reason;
       } catch (err: any) {
+        llmReason = `LLM failed: ${err.message}`;
         log.warn({ pr: pr.number, err }, 'LLM scoring failed');
       }
     }

@@ -199,7 +199,7 @@ describe('ScoringEngine', () => {
       expect(scored.totalScore).toBeGreaterThan(0);
       expect(scored.llmScore).toBeUndefined();
       expect(scored.llmRisk).toBeUndefined();
-      expect(scored.llmReason).toBeUndefined();
+      expect(scored.llmReason).toBe('LLM failed: LLM API error');
     });
 
     it('should fall back on invalid JSON from LLM', async () => {

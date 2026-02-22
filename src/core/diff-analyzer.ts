@@ -21,7 +21,7 @@ export class DiffAnalyzer {
   private provider?: LLMProvider;
   private concurrency: ConcurrencyController;
 
-  constructor(octokit: Octokit, owner: string, repo: string, provider?: LLMProvider, maxConcurrent = 15) {
+  constructor(octokit: Octokit, owner: string, repo: string, provider?: LLMProvider, maxConcurrent = 3) {
     this.octokit = octokit;
     this.owner = owner;
     this.repo = repo;
@@ -29,13 +29,14 @@ export class DiffAnalyzer {
     this.concurrency = new ConcurrencyController(maxConcurrent);
   }
 
-  async analyzeMany(prNumbers: number[]): Promise<DiffAnalysis[]> {
+  async analyzeMany(prNumbers: number[], cc?: ConcurrencyController): Promise<DiffAnalysis[]> {
     if (!this.provider || prNumbers.length === 0) return [];
 
+    const controller = cc ?? this.concurrency;
     log.info({ count: prNumbers.length }, 'Analyzing PR diffs');
 
     const results = await Promise.allSettled(
-      prNumbers.map(num => this.concurrency.execute(() => this.analyzeOne(num)))
+      prNumbers.map(num => controller.execute(() => this.analyzeOne(num)))
     );
 
     const analyses: DiffAnalysis[] = [];

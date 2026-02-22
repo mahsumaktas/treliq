@@ -11,10 +11,10 @@ import pino from 'pino';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-const logger = pino({
+const pinoOptions: pino.LoggerOptions = {
   level: process.env.LOG_LEVEL || 'info',
   transport: !isProduction
-    ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss' } }
+    ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss', destination: 2 } }
     : undefined,
   redact: [
     'token',
@@ -29,7 +29,11 @@ const logger = pino({
     '*.password',
     'headers.authorization',
   ],
-});
+};
+
+const logger = isProduction
+  ? pino(pinoOptions, pino.destination(2))
+  : pino(pinoOptions);
 
 /**
  * Create a child logger scoped to a module
