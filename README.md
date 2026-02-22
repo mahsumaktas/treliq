@@ -12,7 +12,7 @@
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/tests-345_passing-2DA44E?style=flat-square" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-384_passing-2DA44E?style=flat-square" alt="Tests" />
   <img src="https://img.shields.io/badge/signals-21-8B5CF6?style=flat-square" alt="21 Signals" />
   <img src="https://img.shields.io/badge/providers-4-FF6600?style=flat-square" alt="4 Providers" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
@@ -53,6 +53,19 @@ npx treliq scan -r owner/repo --no-llm --include-issues
 ```
 
 ## What's New in v0.7.0
+
+### Accuracy Pipeline (5 New Features)
+Code-aware, semantically intelligent scoring — goes beyond metadata to analyze actual diffs:
+
+| Feature | What it does |
+|---------|-------------|
+| **Diff-Aware Scoring** | Fetches PR diffs, LLM analyzes code quality/risk/change type. New blend: 0.4 heuristic + 0.3 LLM text + 0.3 LLM diff |
+| **Intent-Aware Profiles** | 6 hardcoded weight profiles (bugfix, feature, refactor, dependency, docs, chore) adjust signal weights per intent |
+| **LLM Dedup Verification** | After embedding clusters, LLM verifies "are these really duplicates?" with subgroup splitting. Max 20 clusters |
+| **Issue-PR Semantic Matching** | LLM determines if a PR actually resolves its referenced issue. Bidirectional score impact |
+| **Holistic Re-ranking** | Tournament-style: groups of 50 → top 10 per group → final top 15. Cross-item comparison |
+
+All features are LLM-optional — `--no-llm` skips all new stages.
 
 ### Intent Classification (Signal #21)
 3-tier detection pipeline classifies every PR and issue into one of 6 categories:
@@ -96,8 +109,9 @@ npx treliq scan -r owner/repo --auto-close-dupes --auto-close-spam --auto-merge 
 
 Safety: **dry-run by default**, `--confirm` required for execution, batch limit 50, `--exclude` list, stale state re-check before each action.
 
-### Test Suite (345 tests)
-- 101 new tests across 23 test suites
+### Test Suite (384 tests)
+- 140 new tests across 28 test suites
+- Accuracy pipeline: DiffAnalyzer (7), IntentProfiles (8), DedupVerification (6), SemanticMatcher (7), HolisticRanker (7), Scoring blend (4)
 - Unit tests: IntentClassifier (24), ActionEngine (18), ActionExecutor (18), IssueScoringEngine (14), IssueScanner (6), Issue GraphQL (5), cross-type dedup (4), intent signal (6)
 - Integration tests: Issue CRUD in SQLite (5), scoring engine pipeline
 - Test fixtures: `createIssueData()`, `createScoredIssue()` factories
@@ -134,9 +148,10 @@ Full rewrite of the scan pipeline for large-scale repos (1000+ PRs). First scan 
 - Incremental scans skip re-embedding and re-checking cached PRs
 - Compact JSON format (no pretty-print) reduces cache file size
 
-### Test Suite (244 tests)
-- 26 new tests covering RetryableProvider, batch embedding, adaptive concurrency, parallel dedup/vision, and expanded cache
-- 17 test suites, 244/244 passing
+### Test Suite (384 tests)
+- 28 test suites, 384/384 passing
+- Accuracy pipeline: DiffAnalyzer, IntentProfiles, DedupVerification, SemanticMatcher, HolisticRanker
+- RetryableProvider, batch embedding, adaptive concurrency, parallel dedup/vision, expanded cache
 
 ---
 
