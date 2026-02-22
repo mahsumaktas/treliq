@@ -12,7 +12,7 @@
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/tests-220_passing-2DA44E?style=flat-square" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-244_passing-2DA44E?style=flat-square" alt="Tests" />
   <img src="https://img.shields.io/badge/signals-20-8B5CF6?style=flat-square" alt="20 Signals" />
   <img src="https://img.shields.io/badge/providers-4-FF6600?style=flat-square" alt="4 Providers" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
@@ -46,6 +46,42 @@ Not ready to trust your codebase with an LLM? Try the 100% free, local heuristic
 # Score PRs based on 20 signals (CI, coverage, conflicts, etc.) completely locally
 npx treliq scan -r owner/repo --no-llm
 ```
+
+## What's New in v0.6.0
+
+### Performance Pipeline Redesign
+Full rewrite of the scan pipeline for large-scale repos (1000+ PRs). First scan drops from ~140 min to ~15-20 min; incremental scans finish in ~5-8 min.
+
+### Parallel Pipeline
+- **Dedup + Vision run concurrently** via `Promise.all` (previously sequential)
+- Each stage uses `ConcurrencyController` for internal parallelism
+
+### Batch Embedding
+- **Gemini** `batchEmbedContents` API — 100 embeddings per call
+- **OpenAI** array input — 100 embeddings per call
+- Automatic fallback to parallel individual embedding if batch fails
+
+### RetryableProvider
+- New wrapper around any LLM provider with exponential backoff + jitter
+- Detects HTTP 429 and respects `Retry-After` headers
+- Non-retryable status codes (400/401/403/404/422) fail fast
+- `onThrottle` callback wired to adaptive concurrency controllers
+
+### Adaptive Concurrency
+- `ConcurrencyController.throttle()` halves parallelism on rate-limit hits
+- `ConcurrencyController.recover()` increments back toward initial max
+- Shared controllers across dedup + vision, auto-throttled via RetryableProvider
+
+### Expanded Cache
+- Embedding vectors and vision results now persisted in cache
+- Incremental scans skip re-embedding and re-checking cached PRs
+- Compact JSON format (no pretty-print) reduces cache file size
+
+### Test Suite (244 tests)
+- 26 new tests covering RetryableProvider, batch embedding, adaptive concurrency, parallel dedup/vision, and expanded cache
+- 17 test suites, 244/244 passing
+
+---
 
 ## What's New in v0.5.1
 
