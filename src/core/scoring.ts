@@ -4,6 +4,7 @@
 
 import type { PRData, ScoredPR, SignalScore } from './types';
 import type { LLMProvider } from './provider';
+import { IntentClassifier, type IntentResult } from './intent';
 import { ConcurrencyController } from './concurrency';
 import { createLogger } from './logger';
 
@@ -14,11 +15,13 @@ export class ScoringEngine {
   private trustContributors: boolean;
   private reputationScores = new Map<string, number>();
   private concurrency: ConcurrencyController;
+  private intentClassifier: IntentClassifier;
 
   constructor(provider?: LLMProvider, trustContributors = false, maxConcurrent = 5) {
     this.provider = provider;
     this.trustContributors = trustContributors;
     this.concurrency = new ConcurrencyController(maxConcurrent);
+    this.intentClassifier = new IntentClassifier(provider);
   }
 
   setReputation(login: string, score: number) {
@@ -49,6 +52,8 @@ export class ScoringEngine {
   }
 
   async score(pr: PRData): Promise<ScoredPR> {
+    const intentResult = await this.intentClassifier.classify(pr.title, pr.body ?? '', pr.changedFiles);
+
     const signals: SignalScore[] = [
       this.scoreCI(pr),
       this.scoreDiffSize(pr),
@@ -70,6 +75,7 @@ export class ScoringEngine {
       this.scoreRequestedReviewers(pr),
       this.scoreScopeCoherence(pr),
       this.scoreComplexity(pr),
+      this.scoreIntent(intentResult),
     ];
 
     const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
@@ -111,6 +117,7 @@ export class ScoringEngine {
       llmScore,
       llmRisk,
       llmReason,
+      intent: intentResult.intent,
     };
   }
 
@@ -404,6 +411,18 @@ export class ScoringEngine {
       score,
       weight: 0.06,
       reason: `${label}: ${dirCount} area(s) [${[...topDirs].slice(0, 4).join(', ')}]`,
+    };
+  }
+
+  private scoreIntent(result: IntentResult): SignalScore {
+    const scores: Record<string, number> = {
+      bugfix: 90, feature: 85, refactor: 60, dependency: 35, docs: 30, chore: 25,
+    };
+    return {
+      name: 'intent',
+      score: scores[result.intent] ?? 50,
+      weight: 0.08,
+      reason: `${result.intent} (${result.reason})`,
     };
   }
 

@@ -432,6 +432,61 @@ describe('ScoringEngine', () => {
     });
   });
 
+  describe('intent signal', () => {
+    it('scores bugfix intent as 90', async () => {
+      const engine = new ScoringEngine();
+      const pr = createPRData({ title: 'fix: resolve auth crash' });
+      const scored = await engine.score(pr);
+      const intentSignal = scored.signals.find(s => s.name === 'intent');
+      expect(intentSignal).toBeDefined();
+      expect(intentSignal!.score).toBe(90);
+      expect(scored.intent).toBe('bugfix');
+    });
+
+    it('scores feature intent as 85', async () => {
+      const engine = new ScoringEngine();
+      const pr = createPRData({ title: 'feat: add dark mode' });
+      const scored = await engine.score(pr);
+      const intentSignal = scored.signals.find(s => s.name === 'intent');
+      expect(intentSignal!.score).toBe(85);
+      expect(scored.intent).toBe('feature');
+    });
+
+    it('scores dependency intent as 35', async () => {
+      const engine = new ScoringEngine();
+      const pr = createPRData({ title: 'chore(deps): bump lodash' });
+      const scored = await engine.score(pr);
+      const intentSignal = scored.signals.find(s => s.name === 'intent');
+      expect(intentSignal!.score).toBe(35);
+      expect(scored.intent).toBe('dependency');
+    });
+
+    it('scores docs intent as 30', async () => {
+      const engine = new ScoringEngine();
+      const pr = createPRData({ title: 'docs: update API reference' });
+      const scored = await engine.score(pr);
+      const intentSignal = scored.signals.find(s => s.name === 'intent');
+      expect(intentSignal!.score).toBe(30);
+      expect(scored.intent).toBe('docs');
+    });
+
+    it('scores chore intent as 25', async () => {
+      const engine = new ScoringEngine();
+      const pr = createPRData({ title: 'ci: fix GitHub Actions workflow' });
+      const scored = await engine.score(pr);
+      const intentSignal = scored.signals.find(s => s.name === 'intent');
+      expect(intentSignal!.score).toBe(25);
+      expect(scored.intent).toBe('chore');
+    });
+
+    it('uses heuristic for non-conventional titles', async () => {
+      const engine = new ScoringEngine();
+      const pr = createPRData({ title: 'Fix crash on login page', changedFiles: ['src/auth.ts'] });
+      const scored = await engine.score(pr);
+      expect(scored.intent).toBe('bugfix');
+    });
+  });
+
   describe('LLM integration', () => {
     it('blends heuristic and LLM scores with 0.4/0.6 ratio', async () => {
       const provider = new MockLLMProvider();
