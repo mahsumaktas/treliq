@@ -4,6 +4,7 @@
 
 export class ConcurrencyController {
   private maxConcurrent: number;
+  private readonly initialMax: number;
   private retryAttempts: number;
   private retryDelay: number;
   private running = 0;
@@ -11,8 +12,21 @@ export class ConcurrencyController {
 
   constructor(maxConcurrent = 5, retryAttempts = 2, retryDelay = 1000) {
     this.maxConcurrent = maxConcurrent;
+    this.initialMax = maxConcurrent;
     this.retryAttempts = retryAttempts;
     this.retryDelay = retryDelay;
+  }
+
+  getMaxConcurrent(): number {
+    return this.maxConcurrent;
+  }
+
+  throttle(): void {
+    this.maxConcurrent = Math.max(2, Math.floor(this.maxConcurrent / 2));
+  }
+
+  recover(): void {
+    this.maxConcurrent = Math.min(this.initialMax, this.maxConcurrent + 1);
   }
 
   async execute<T>(fn: () => Promise<T>): Promise<T> {

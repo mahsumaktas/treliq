@@ -90,4 +90,42 @@ describe('ConcurrencyController', () => {
     expect(startTimes.length).toBe(6);
     expect(endTimes.length).toBe(6);
   });
+
+  describe('Adaptive concurrency', () => {
+    it('reduces concurrency via throttle()', () => {
+      const controller = new ConcurrencyController(10, 0, 10);
+      expect(controller.getMaxConcurrent()).toBe(10);
+
+      controller.throttle();
+      expect(controller.getMaxConcurrent()).toBe(5);
+
+      controller.throttle();
+      expect(controller.getMaxConcurrent()).toBe(2);
+    });
+
+    it('increases concurrency via recover()', () => {
+      const controller = new ConcurrencyController(4, 0, 10);
+      controller.throttle(); // -> 2
+      expect(controller.getMaxConcurrent()).toBe(2);
+
+      controller.recover();
+      expect(controller.getMaxConcurrent()).toBe(3);
+
+      controller.recover();
+      expect(controller.getMaxConcurrent()).toBe(4); // cap at initial
+    });
+
+    it('does not exceed initial maxConcurrent on recover', () => {
+      const controller = new ConcurrencyController(5, 0, 10);
+      controller.recover();
+      controller.recover();
+      expect(controller.getMaxConcurrent()).toBe(5); // stays at initial
+    });
+
+    it('does not go below minimum (2) on throttle', () => {
+      const controller = new ConcurrencyController(2, 0, 10);
+      controller.throttle();
+      expect(controller.getMaxConcurrent()).toBe(2); // min floor
+    });
+  });
 });
