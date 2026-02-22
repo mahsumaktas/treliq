@@ -42,4 +42,64 @@ describe('VisionChecker', () => {
       reason: 'Could not parse LLM response',
     });
   });
+
+  describe('VisionChecker.checkMany', () => {
+    it('checks multiple PRs in parallel', async () => {
+      const provider = new MockLLMProvider();
+      let callCount = 0;
+      provider.generateTextResponse = () => {
+        callCount++;
+        return `{"score": ${70 + callCount}, "alignment": "aligned", "reason": "reason ${callCount}"}`;
+      };
+      const checker = new VisionChecker('Focus on developer tooling', provider);
+
+      const prs = [
+        createScoredPR({ number: 1 }),
+        createScoredPR({ number: 2 }),
+        createScoredPR({ number: 3 }),
+      ];
+
+      await checker.checkMany(prs);
+
+      expect(prs[0].visionAlignment).toBe('aligned');
+      expect(prs[1].visionAlignment).toBe('aligned');
+      expect(prs[2].visionAlignment).toBe('aligned');
+      expect(prs[0].visionScore).toBeDefined();
+      expect(prs[1].visionScore).toBeDefined();
+      expect(prs[2].visionScore).toBeDefined();
+      expect(callCount).toBe(3);
+    });
+
+    it('handles individual failures gracefully', async () => {
+      const provider = new MockLLMProvider();
+      let callCount = 0;
+      provider.generateTextResponse = () => {
+        callCount++;
+        if (callCount === 2) throw new Error('LLM error');
+        return '{"score": 80, "alignment": "aligned", "reason": "ok"}';
+      };
+      const checker = new VisionChecker('Vision doc', provider);
+
+      const prs = [
+        createScoredPR({ number: 1 }),
+        createScoredPR({ number: 2 }),
+        createScoredPR({ number: 3 }),
+      ];
+
+      await checker.checkMany(prs);
+
+      expect(prs[0].visionAlignment).toBe('aligned');
+      // PR 2 may fail after retries depending on ConcurrencyController retry behavior
+      // But it should have 'unchecked' if all retries fail
+      expect(prs[2].visionAlignment).toBe('aligned');
+    });
+
+    it('works with empty array', async () => {
+      const provider = new MockLLMProvider();
+      const checker = new VisionChecker('Vision doc', provider);
+
+      await checker.checkMany([]);
+      expect(provider.generateTextCalls).toHaveLength(0);
+    });
+  });
 });

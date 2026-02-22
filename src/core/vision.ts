@@ -4,6 +4,10 @@
 
 import type { ScoredPR } from './types';
 import type { LLMProvider } from './provider';
+import { ConcurrencyController } from './concurrency';
+import { createLogger } from './logger';
+
+const log = createLogger('vision');
 
 export class VisionChecker {
   private visionDoc: string;
@@ -44,5 +48,29 @@ Respond with EXACTLY one JSON object (no markdown):
     } catch { /* fallback */ }
 
     return { alignment: 'tangential', score: 50, reason: 'Could not parse LLM response' };
+  }
+
+  /** Check multiple PRs in parallel with concurrency control */
+  async checkMany(prs: ScoredPR[], maxConcurrent = 10): Promise<void> {
+    const cc = new ConcurrencyController(maxConcurrent, 2, 1000);
+
+    const results = await Promise.allSettled(
+      prs.map(pr => cc.execute(async () => {
+        const result = await this.check(pr);
+        pr.visionAlignment = result.alignment;
+        pr.visionScore = result.score;
+        pr.visionReason = result.reason;
+      }))
+    );
+
+    let failed = 0;
+    for (const [i, result] of results.entries()) {
+      if (result.status === 'rejected') {
+        failed++;
+        log.warn({ pr: prs[i].number, err: result.reason }, 'Vision check failed');
+        prs[i].visionAlignment = 'unchecked';
+      }
+    }
+    if (failed > 0) log.warn({ failed, total: prs.length }, 'Some vision checks failed');
   }
 }
