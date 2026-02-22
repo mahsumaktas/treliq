@@ -42,7 +42,7 @@ describe('DedupEngine', () => {
     expect(pr3.duplicateGroup).toBeUndefined();
   });
 
-  it('stops embedding after 5 consecutive failures', async () => {
+  it('handles individual embedding failures gracefully', async () => {
     const provider: LLMProvider = {
       name: 'mock',
       generateText: jest.fn(),
@@ -54,6 +54,71 @@ describe('DedupEngine', () => {
     const clusters = await engine.findDuplicates(prs);
 
     expect(clusters).toEqual([]);
-    expect(provider.generateEmbedding).toHaveBeenCalledTimes(5);
+    // All 6 PRs attempted; ConcurrencyController retries each 2 times (3 calls per PR)
+    expect(provider.generateEmbedding).toHaveBeenCalledTimes(18);
+  });
+
+  it('uses batch embedding when provider supports it', async () => {
+    const batchFn = jest.fn().mockResolvedValue([
+      [1, 0, 0],
+      [0.99, 0.01, 0],
+      [0, 1, 0],
+    ]);
+    const provider: any = {
+      name: 'mock-batch',
+      generateText: jest.fn(),
+      generateEmbedding: jest.fn(),
+      generateEmbeddingBatch: batchFn,
+    };
+
+    const pr1 = createScoredPR({ number: 10, title: 'fix login bug', totalScore: 65 });
+    const pr2 = createScoredPR({ number: 11, title: 'auth fix', totalScore: 92 });
+    const pr3 = createScoredPR({ number: 12, title: 'docs update', totalScore: 70 });
+
+    const engine = new DedupEngine(0.85, 0.8, provider);
+    const clusters = await engine.findDuplicates([pr1, pr2, pr3]);
+
+    expect(batchFn).toHaveBeenCalledTimes(1);
+    expect(provider.generateEmbedding).not.toHaveBeenCalled();
+    expect(clusters.length).toBe(1);
+  });
+
+  it('falls back to parallel individual embedding when batch not supported', async () => {
+    const provider: LLMProvider = {
+      name: 'mock-no-batch',
+      generateText: jest.fn(),
+      generateEmbedding: jest.fn().mockImplementation(async (text: string) => {
+        if (text.includes('login')) return [1, 0, 0];
+        return [0, 1, 0];
+      }),
+    };
+
+    const pr1 = createScoredPR({ number: 10, title: 'fix login bug', totalScore: 65 });
+    const pr2 = createScoredPR({ number: 12, title: 'docs update', totalScore: 70 });
+
+    const engine = new DedupEngine(0.85, 0.8, provider);
+    await engine.findDuplicates([pr1, pr2]);
+
+    expect(provider.generateEmbedding).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to parallel when batch fails', async () => {
+    const batchFn = jest.fn().mockRejectedValue(new Error('batch failed'));
+    const provider: any = {
+      name: 'mock-batch-fail',
+      generateText: jest.fn(),
+      generateEmbedding: jest.fn().mockResolvedValue([0.5, 0.5, 0]),
+      generateEmbeddingBatch: batchFn,
+    };
+
+    const pr1 = createScoredPR({ number: 10, title: 'PR A', totalScore: 65 });
+    const pr2 = createScoredPR({ number: 11, title: 'PR B', totalScore: 70 });
+
+    const engine = new DedupEngine(0.85, 0.8, provider);
+    await engine.findDuplicates([pr1, pr2]);
+
+    expect(batchFn).toHaveBeenCalledTimes(1);
+    // Should fall back to individual
+    expect(provider.generateEmbedding).toHaveBeenCalledTimes(2);
   });
 });

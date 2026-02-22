@@ -6,6 +6,7 @@
 import type { ScoredPR, DedupCluster } from './types';
 import type { LLMProvider } from './provider';
 import { VectorStore, type VectorRecord } from './vectorstore';
+import { ConcurrencyController } from './concurrency';
 import { createLogger } from './logger';
 
 const log = createLogger('dedup');
@@ -38,27 +39,51 @@ export class DedupEngine {
   async findDuplicates(prs: ScoredPR[]): Promise<DedupCluster[]> {
     if (prs.length < 2) return [];
 
-    // 1. Embed all PRs
+    // 1. Embed all PRs — batch first, parallel individual fallback
     log.info({ count: prs.length }, 'Embedding PRs');
     const embeddings: Map<number, number[]> = new Map();
-    let consecutiveFailures = 0;
 
-    for (const pr of prs) {
-      if (consecutiveFailures >= 5) {
-        log.warn('Too many embedding failures, skipping remaining PRs for dedup');
-        break;
-      }
+    const hasBatch = typeof (this.provider as any).generateEmbeddingBatch === 'function';
+    let batchDone = false;
+
+    if (hasBatch) {
+      log.info({ count: prs.length }, 'Using batch embedding');
+      const BATCH_SIZE = 100;
       try {
-        const text = this.prToText(pr);
-        const embedding = await this.embed(text);
-        pr.embedding = embedding;
-        embeddings.set(pr.number, embedding);
-        consecutiveFailures = 0;
-        // Rate limit protection
-        await new Promise(r => setTimeout(r, 250));
+        for (let i = 0; i < prs.length; i += BATCH_SIZE) {
+          const batch = prs.slice(i, i + BATCH_SIZE);
+          const texts = batch.map(pr => this.prToText(pr));
+          const results = await (this.provider as any).generateEmbeddingBatch(texts);
+          for (let j = 0; j < batch.length; j++) {
+            batch[j].embedding = results[j];
+            embeddings.set(batch[j].number, results[j]);
+          }
+        }
+        batchDone = true;
       } catch (err: any) {
-        consecutiveFailures++;
-        log.warn({ pr: pr.number, err }, 'Failed to embed PR');
+        log.warn({ err }, 'Batch embedding failed, falling back to parallel individual');
+      }
+    }
+
+    // For PRs without embedding (batch failed or no batch support): parallel individual
+    if (!batchDone) {
+      const remaining = prs.filter(p => !p.embedding);
+      if (remaining.length > 0) {
+        log.info({ count: remaining.length }, 'Embedding PRs individually (parallel)');
+        const cc = new ConcurrencyController(15, 2, 500);
+        const results = await Promise.allSettled(
+          remaining.map(pr => cc.execute(async () => {
+            const text = this.prToText(pr);
+            const embedding = await this.embed(text);
+            pr.embedding = embedding;
+            embeddings.set(pr.number, embedding);
+          }))
+        );
+        let failed = 0;
+        for (const r of results) {
+          if (r.status === 'rejected') failed++;
+        }
+        if (failed > 0) log.warn({ failed }, 'Some embeddings failed');
       }
     }
 
