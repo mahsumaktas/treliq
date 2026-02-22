@@ -3,7 +3,7 @@
  */
 
 import { TreliqDB } from '../../src/core/db';
-import { createScoredPR } from '../fixtures/pr-factory';
+import { createScoredPR, createScoredIssue } from '../fixtures/pr-factory';
 
 describe('TreliqDB', () => {
   let db: TreliqDB;
@@ -469,6 +469,70 @@ describe('TreliqDB', () => {
 
       const installationId = db.getRepoInstallation('owner', 'repo');
       expect(installationId).toBeNull();
+    });
+  });
+
+  describe('Issue CRUD', () => {
+    it('should insert issue and retrieve by number', () => {
+      const repoId = db.upsertRepository('owner', 'repo');
+      const issue = createScoredIssue({
+        number: 10,
+        title: 'Bug report',
+        signals: [
+          { name: 'body_quality', score: 80, weight: 0.08, reason: 'Good description' },
+        ],
+      });
+
+      db.upsertIssue(repoId, issue, 'test-hash');
+
+      const retrieved = db.getIssueByNumber(repoId, 10);
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.number).toBe(10);
+      expect(retrieved?.title).toBe('Bug report');
+      expect(retrieved?.signals).toHaveLength(1);
+    });
+
+    it('should update existing issue on upsert', () => {
+      const repoId = db.upsertRepository('owner', 'repo');
+      db.upsertIssue(repoId, createScoredIssue({ number: 10, title: 'Old' }), 'hash');
+      db.upsertIssue(repoId, createScoredIssue({ number: 10, title: 'New' }), 'hash');
+
+      const retrieved = db.getIssueByNumber(repoId, 10);
+      expect(retrieved?.title).toBe('New');
+    });
+
+    it('should list issues with pagination', () => {
+      const repoId = db.upsertRepository('owner', 'repo');
+      for (let i = 1; i <= 5; i++) {
+        db.upsertIssue(repoId, createScoredIssue({ number: i, totalScore: i * 10 }), 'hash');
+      }
+
+      const all = db.getIssues(repoId);
+      expect(all).toHaveLength(5);
+
+      const page = db.getIssues(repoId, { limit: 2, offset: 0 });
+      expect(page).toHaveLength(2);
+    });
+
+    it('should filter issues by state', () => {
+      const repoId = db.upsertRepository('owner', 'repo');
+      db.upsertIssue(repoId, createScoredIssue({ number: 1, state: 'open' }), 'hash');
+      db.upsertIssue(repoId, createScoredIssue({ number: 2, state: 'closed' }), 'hash');
+
+      const open = db.getIssues(repoId, { state: 'open' });
+      expect(open).toHaveLength(1);
+      expect(open[0].number).toBe(1);
+    });
+
+    it('should be cleared with clearRepository', () => {
+      const repoId = db.upsertRepository('owner', 'repo');
+      db.upsertIssue(repoId, createScoredIssue({ number: 10 }), 'hash');
+
+      const result = db.clearRepository(repoId);
+      expect(result.deletedIssues).toBe(1);
+
+      const issues = db.getIssues(repoId);
+      expect(issues).toHaveLength(0);
     });
   });
 

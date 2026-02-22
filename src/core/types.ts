@@ -74,22 +74,83 @@ export interface ScoredPR extends PRData {
   duplicateGroup?: number;     // Cluster ID if part of a duplicate group
   isSpam: boolean;
   spamReasons: string[];
+  intent?: IntentCategory;
+  diffAnalysis?: DiffAnalysis;
+  semanticMatches?: SemanticMatch[];
+  holisticRank?: number;
+  adjustedScore?: number;
 }
+
+export type IntentCategory = 'bugfix' | 'feature' | 'refactor' | 'dependency' | 'docs' | 'chore';
+
+export interface IssueData {
+  number: number;
+  title: string;
+  body: string;
+  author: string;
+  authorAssociation: string;
+  createdAt: string;
+  updatedAt: string;
+  labels: string[];
+  milestone?: string;
+  commentCount: number;
+  reactionCount: number;
+  state: 'open' | 'closed';
+  stateReason?: 'completed' | 'not_planned' | null;
+  isLocked: boolean;
+  assignees: string[];
+  linkedPRs: number[];
+}
+
+export interface ScoredIssue extends IssueData {
+  totalScore: number;
+  signals: SignalScore[];
+  intent?: IntentCategory;
+  embedding?: number[];
+  duplicateGroup?: number;
+  isSpam: boolean;
+  spamReasons: string[];
+  semanticMatches?: SemanticMatch[];
+  holisticRank?: number;
+  adjustedScore?: number;
+}
+
+export interface DiffAnalysis {
+  prNumber: number;
+  codeQuality: number;        // 0-100
+  riskAssessment: 'low' | 'medium' | 'high' | 'critical';
+  changeType: 'additive' | 'modifying' | 'removing' | 'mixed';
+  affectedAreas: string[];
+  summary: string;
+}
+
+export interface SemanticMatch {
+  prNumber: number;
+  issueNumber: number;
+  matchQuality: 'full' | 'partial' | 'unrelated' | 'unchecked';
+  confidence: number;
+  reason: string;
+}
+
+export type TriageItem = ScoredPR | ScoredIssue;
 
 export interface DedupCluster {
   id: number;
-  prs: ScoredPR[];
-  bestPR: number;              // PR number of recommended best
+  prs: TriageItem[];           // Items in cluster (name kept for backward compat)
+  bestPR: number;              // Item number of recommended best
   similarity: number;          // Average similarity within cluster
   reason: string;              // Why these are grouped
+  type?: 'pr' | 'issue' | 'mixed';
 }
 
 export interface TreliqResult {
   repo: string;
   scannedAt: string;
   totalPRs: number;
+  totalIssues?: number;
   spamCount: number;
   duplicateClusters: DedupCluster[];
   rankedPRs: ScoredPR[];       // Sorted by totalScore desc
+  rankedIssues?: ScoredIssue[];
   summary: string;
 }

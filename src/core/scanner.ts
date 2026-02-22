@@ -5,7 +5,7 @@
 
 import { Octokit } from '@octokit/rest';
 import { graphql } from '@octokit/graphql';
-import type { TreliqConfig, PRData, ScoredPR, TreliqResult, DedupCluster } from './types';
+import type { TreliqConfig, PRData, ScoredPR, TreliqResult, DedupCluster, DiffAnalysis, ScoredIssue, TriageItem } from './types';
 import type { LLMProvider } from './provider';
 import { ScoringEngine } from './scoring';
 import { DedupEngine } from './dedup';
@@ -18,6 +18,9 @@ import { TreliqDB } from './db';
 import { RateLimitManager } from './ratelimit';
 import { PR_LIST_QUERY, PR_DETAILS_QUERY, SINGLE_PR_QUERY, mapGraphQLToPRData } from './graphql';
 import { createLogger } from './logger';
+import { DiffAnalyzer } from './diff-analyzer';
+import { SemanticMatcher } from './semantic-matcher';
+import { HolisticRanker } from './holistic-ranker';
 
 const log = createLogger('scanner');
 
@@ -54,7 +57,12 @@ export class TreliqScanner {
   private visionCC: ConcurrencyController;
   scoring: ScoringEngine;
   public shaMap = new Map<number, string>();
+  private _rankedIssues?: ScoredIssue[];
   private db?: TreliqDB;
+
+  setRankedIssues(issues: ScoredIssue[]): void {
+    this._rankedIssues = issues;
+  }
 
   constructor(config: TreliqConfig) {
     this.config = config;
@@ -167,6 +175,24 @@ export class TreliqScanner {
 
     log.info({ cached: fromCache, reScored }, 'Scoring complete');
 
+    // 2b. Diff analysis (all PRs, parallel)
+    let diffMap = new Map<number, DiffAnalysis>();
+    if (this.wrappedProvider) {
+      try {
+        const diffAnalyzer = new DiffAnalyzer(this.octokit, owner, repo, this.wrappedProvider);
+        const prNumbers = scored.map(pr => pr.number);
+        const analyses = await diffAnalyzer.analyzeMany(prNumbers);
+        for (const analysis of analyses) {
+          diffMap.set(analysis.prNumber, analysis);
+          const pr = scored.find(p => p.number === analysis.prNumber);
+          if (pr) pr.diffAnalysis = analysis;
+        }
+        log.info({ analyzed: analyses.length }, 'Diff analysis complete');
+      } catch (err: any) {
+        log.warn({ err }, 'Diff analysis failed (skipping)');
+      }
+    }
+
     // 3. Dedup + Vision — run in parallel (they write disjoint property sets)
     // IMPORTANT: dedup writes {embedding, duplicateGroup}, vision writes {visionAlignment, visionScore, visionReason}.
     // These property sets MUST remain disjoint for safe parallel mutation on shared ScoredPR objects.
@@ -189,7 +215,7 @@ export class TreliqScanner {
           this.config.relatedThreshold,
           this.wrappedProvider,
         );
-        const c = await dedup.findDuplicates(scored, this.dedupCC);
+        const c = await dedup.findDuplicates(scored, this.dedupCC, !!this.wrappedProvider);
         log.info({ clusters: c.length }, 'Found duplicate clusters');
         return c;
       } catch (err: any) {
@@ -224,8 +250,69 @@ export class TreliqScanner {
 
     [clusters] = await Promise.all([dedupPromise, visionPromise]);
 
-    // Sort by score desc
-    scored.sort((a, b) => b.totalScore - a.totalScore);
+    // 4. Semantic matching (PR-Issue pairs)
+    if (this.wrappedProvider && this._rankedIssues && this._rankedIssues.length > 0) {
+      try {
+        const matcher = new SemanticMatcher(this.wrappedProvider);
+        const matchResult = await matcher.matchAll(scored, this._rankedIssues, diffMap);
+
+        // Apply PR bonuses
+        for (const [prNum, bonus] of matchResult.prBonuses) {
+          const pr = scored.find(p => p.number === prNum);
+          if (pr) {
+            pr.totalScore = Math.max(0, Math.min(100, pr.totalScore + bonus));
+            pr.semanticMatches = matchResult.matches.filter(m => m.prNumber === prNum);
+          }
+        }
+
+        // Apply issue score updates
+        for (const [issueNum, score] of matchResult.issueScoreUpdates) {
+          const issue = (this._rankedIssues as ScoredIssue[]).find(i => i.number === issueNum);
+          if (issue) {
+            const linkedSignal = issue.signals.find(s => s.name === 'has_linked_pr');
+            if (linkedSignal) linkedSignal.score = score;
+            issue.semanticMatches = matchResult.matches.filter(m => m.issueNumber === issueNum);
+          }
+        }
+
+        log.info({ matches: matchResult.matches.length }, 'Semantic matching complete');
+      } catch (err: any) {
+        log.warn({ err }, 'Semantic matching failed (skipping)');
+      }
+    }
+
+    // 5. Holistic re-ranking
+    if (this.wrappedProvider) {
+      try {
+        const ranker = new HolisticRanker(this.wrappedProvider);
+        const allItems: TriageItem[] = [...scored];
+        if (this._rankedIssues) {
+          allItems.push(...this._rankedIssues);
+        }
+        const rankings = await ranker.rank(allItems);
+
+        for (const [itemNumber, rank] of rankings) {
+          const pr = scored.find(p => p.number === itemNumber);
+          if (pr) {
+            pr.holisticRank = rank;
+            pr.adjustedScore = HolisticRanker.calculateAdjustedScore(pr.totalScore, rank);
+          }
+          if (this._rankedIssues) {
+            const issue = (this._rankedIssues as ScoredIssue[]).find(i => i.number === itemNumber);
+            if (issue) {
+              issue.holisticRank = rank;
+              issue.adjustedScore = HolisticRanker.calculateAdjustedScore(issue.totalScore, rank);
+            }
+          }
+        }
+        log.info({ ranked: rankings.size }, 'Holistic re-ranking complete');
+      } catch (err: any) {
+        log.warn({ err }, 'Holistic re-ranking failed (skipping)');
+      }
+    }
+
+    // Sort by adjustedScore (if available) then totalScore
+    scored.sort((a, b) => (b.adjustedScore ?? b.totalScore) - (a.adjustedScore ?? a.totalScore));
     const spamCount = scored.filter(p => p.isSpam).length;
 
     const topLine = scored.length > 0

@@ -2,7 +2,7 @@
  * Test fixture factories for PR data
  */
 
-import type { PRData, ScoredPR, SignalScore } from '../../src/core/types';
+import type { PRData, ScoredPR, SignalScore, IssueData, ScoredIssue } from '../../src/core/types';
 
 /**
  * Create a PRData object with sensible defaults and optional overrides
@@ -85,6 +85,7 @@ export function createScoredPR(overrides: Partial<ScoredPR> = {}): ScoredPR {
     spamReasons: [],
     visionScore: undefined,
     visionReason: undefined,
+    intent: overrides.intent,
   };
 
   const signals = overrides.signals ?? defaultSignals;
@@ -95,5 +96,42 @@ export function createScoredPR(overrides: Partial<ScoredPR> = {}): ScoredPR {
     ...overrides,
     signals,
     isSpam,
+  };
+}
+
+export function createIssueData(overrides: Partial<IssueData> = {}): IssueData {
+  return {
+    number: 1,
+    title: 'Bug: login fails on Safari',
+    body: 'Steps to reproduce:\n1. Open Safari\n2. Click login\n3. Nothing happens',
+    author: 'testuser',
+    authorAssociation: 'CONTRIBUTOR',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-02T00:00:00Z',
+    labels: [],
+    commentCount: 0,
+    reactionCount: 0,
+    state: 'open',
+    isLocked: false,
+    assignees: [],
+    linkedPRs: [],
+    ...overrides,
+  };
+}
+
+export function createScoredIssue(overrides: Partial<ScoredIssue> = {}): ScoredIssue {
+  const baseIssue = createIssueData(overrides);
+
+  const defaults: ScoredIssue = {
+    ...baseIssue,
+    totalScore: 50,
+    signals: [],
+    isSpam: false,
+    spamReasons: [],
+  };
+
+  return {
+    ...defaults,
+    ...overrides,
   };
 }

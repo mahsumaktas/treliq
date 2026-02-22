@@ -44,6 +44,15 @@ interface CLIOpts {
   privateKeyPath?: string;
   llm?: boolean;
   model?: string;
+  includeIssues?: boolean;
+  autoCloseDupes?: boolean;
+  autoCloseSpam?: boolean;
+  autoMerge?: boolean;
+  mergeThreshold?: string;
+  mergeMethod?: string;
+  autoLabelIntent?: boolean;
+  confirm?: boolean;
+  exclude?: string;
 }
 
 type ConfigProvider = ProviderName | 'none';
@@ -316,7 +325,7 @@ function outputScoredPR(scored: ScoredPR, format: string) {
 program
   .name('treliq')
   .description('AI-Powered PR Triage for Maintainers & Enterprise Teams')
-  .version('0.4.0');
+  .version('0.7.0');
 
 program
   .command('init')
@@ -441,7 +450,7 @@ program
   .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
   .option('-k, --gemini-key <key>', 'Gemini API key (or GEMINI_API_KEY env)')
   .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter|none')
-  .option('-m, --model <name>', 'LLM model name (overrides provider default)')
+  .option('--model <name>', 'LLM model name (overrides provider default)')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('--no-llm', 'Disable LLM scoring and use heuristic-only mode')
   .option('-f, --format <format>', 'Output format: table|json|markdown', 'table')
@@ -450,6 +459,15 @@ program
   .option('--trust-contributors', 'Exempt known contributors from spam detection', false)
   .option('--no-cache', 'Force full rescan, ignore cache')
   .option('--cache-file <path>', 'Custom cache file path', '.treliq-cache.json')
+  .option('--include-issues', 'Also scan and triage issues', false)
+  .option('--auto-close-dupes', 'Close duplicate PRs/Issues (dry-run without --confirm)', false)
+  .option('--auto-close-spam', 'Close spam PRs/Issues (dry-run without --confirm)', false)
+  .option('--auto-merge', 'Merge high-score approved PRs (dry-run without --confirm)', false)
+  .option('--merge-threshold <score>', 'Min score for auto-merge', '85')
+  .option('--merge-method <method>', 'Merge method: squash|merge|rebase', 'squash')
+  .option('--auto-label-intent', 'Label PRs/Issues by intent', false)
+  .option('--confirm', 'Execute auto-actions (not just dry-run)', false)
+  .option('--exclude <numbers>', 'Comma-separated PR/Issue numbers to exclude')
   .action(async (opts: CLIOpts) => {
     const config = makeConfig(opts);
     if (!config.token) {
@@ -462,6 +480,124 @@ program
     const scanner = new TreliqScanner(config);
     const result = await scanner.scan();
     outputResult(result, config.outputFormat);
+
+    // Issue scanning (if --include-issues)
+    if (opts.includeIssues) {
+      const { IssueScanner } = await import('./core/issue-scanner');
+      const issueScanner = new IssueScanner({
+        repo: config.repo,
+        token: config.token,
+        maxIssues: config.maxPRs,
+        provider: config.provider,
+      });
+      const scoredIssues = await issueScanner.scan(result.rankedPRs);
+      result.rankedIssues = scoredIssues;
+      result.totalIssues = scoredIssues.length;
+      console.log(`\n📋 ${scoredIssues.length} issues scanned.`);
+    }
+
+    // Auto-actions
+    const hasAutoActions = opts.autoCloseDupes || opts.autoCloseSpam || opts.autoMerge || opts.autoLabelIntent;
+    if (hasAutoActions) {
+      try {
+        const { ActionEngine } = await import('./core/actions');
+        const exclude = opts.exclude ? opts.exclude.split(',').map(n => parseInt(n.trim(), 10)).filter(n => !isNaN(n) && n > 0) : [];
+        const mergeThreshold = parseInt(opts.mergeThreshold ?? '85', 10);
+        const mergeMethod = (opts.mergeMethod ?? 'squash') as 'squash' | 'merge' | 'rebase';
+        const engine = new ActionEngine({
+          mergeThreshold,
+          mergeMethod,
+          exclude,
+        });
+
+        // Collect all items for action planning
+        const allItems: import('./core/types').TriageItem[] = [...result.rankedPRs];
+        if (result.rankedIssues) allItems.push(...result.rankedIssues);
+
+        const actions: import('./core/actions').ActionItem[] = [];
+        if (opts.autoCloseDupes) actions.push(...engine.planCloseDuplicates(allItems, result.duplicateClusters));
+        if (opts.autoCloseSpam) actions.push(...engine.planCloseSpam(allItems));
+        if (opts.autoMerge) actions.push(...engine.planAutoMerge(result.rankedPRs));
+        if (opts.autoLabelIntent) actions.push(...engine.planLabelIntent(allItems));
+
+        if (!opts.confirm) {
+          console.log('\n' + engine.formatDryRun(actions));
+        } else {
+          if (actions.length === 0) {
+            console.log('\nNo actions to execute.');
+          } else {
+            const { ActionExecutor } = await import('./core/action-executor');
+            const [owner, repo] = config.repo.split('/');
+            const octokit = new Octokit({ auth: config.token });
+            const executor = new ActionExecutor(octokit, owner, repo);
+            console.log(`\nExecuting ${actions.length} actions...`);
+            const execResult = await executor.execute(actions);
+            console.log(`Done: ${execResult.executed} executed, ${execResult.skipped} skipped, ${execResult.failed} failed.`);
+            for (const detail of execResult.details) {
+              const icon = detail.status === 'executed' ? '  ✅' : detail.status === 'skipped' ? '  ⏭️' : '  ❌';
+              console.log(`${icon} #${detail.target} ${detail.action}${detail.reason ? ` (${detail.reason})` : ''}`);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error(`Auto-actions failed: ${err.message}`);
+        process.exit(1);
+      }
+    }
+  });
+
+program
+  .command('scan-issues')
+  .description('Scan and triage open issues in a repository')
+  .requiredOption('-r, --repo <owner/repo>', 'GitHub repository')
+  .option('-t, --token <token>', 'GitHub token (or GITHUB_TOKEN env)')
+  .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter|none')
+  .option('--model <name>', 'LLM model name (overrides provider default)')
+  .option('--api-key <key>', 'API key for the selected provider')
+  .option('--no-llm', 'Disable LLM scoring')
+  .option('-f, --format <format>', 'Output format: table|json|markdown', 'table')
+  .option('-m, --max <number>', 'Max issues to scan', '500')
+  .action(async (opts: CLIOpts) => {
+    const config = makeConfig(opts);
+    if (!config.token) {
+      console.error('❌ GITHUB_TOKEN required. Set via env or --token flag.');
+      process.exit(1);
+    }
+    if (!config.provider && opts.llm !== false) {
+      showHeuristicFallbackWarning();
+    }
+
+    const { IssueScanner } = await import('./core/issue-scanner');
+    const issueScanner = new IssueScanner({
+      repo: config.repo,
+      token: config.token,
+      maxIssues: config.maxPRs,
+      provider: config.provider,
+    });
+
+    console.log(`🔍 Scanning issues for ${config.repo}...`);
+    const issues = await issueScanner.scan();
+
+    if (opts.format === 'json') {
+      const clean = issues.map(({ embedding, ...rest }) => rest);
+      console.log(JSON.stringify(clean, null, 2));
+    } else {
+      console.log(`\n📋 Issue Report — ${config.repo}`);
+      console.log(`   ${issues.length} issues scanned | ${issues.filter(i => i.isSpam).length} spam\n`);
+
+      const rows = issues.slice(0, 30).map(issue => ({
+        '#': issue.number,
+        Score: issue.totalScore,
+        Title: issue.title.slice(0, 45),
+        Author: issue.author.slice(0, 12),
+        Labels: issue.labels.slice(0, 3).join(', '),
+        Comments: issue.commentCount,
+        Reactions: issue.reactionCount,
+        Intent: issue.intent ?? '-',
+        Spam: issue.isSpam ? 'Spam' : 'Clean',
+      }));
+      console.table(rows);
+    }
   });
 
 program
@@ -472,7 +608,7 @@ program
   .option('-t, --token <token>', 'GitHub token')
   .option('-k, --gemini-key <key>', 'Gemini API key (or GEMINI_API_KEY env)')
   .option('-p, --provider <name>', 'LLM provider: gemini|openai|anthropic|openrouter|none')
-  .option('-m, --model <name>', 'LLM model name (overrides provider default)')
+  .option('--model <name>', 'LLM model name (overrides provider default)')
   .option('--api-key <key>', 'API key for the selected provider')
   .option('--no-llm', 'Disable LLM scoring and use heuristic-only mode')
   .option('-f, --format <format>', 'Output format', 'table')

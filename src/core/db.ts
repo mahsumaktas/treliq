@@ -6,7 +6,7 @@
  */
 
 import Database from 'better-sqlite3';
-import type { ScoredPR, SignalScore } from './types';
+import type { ScoredPR, ScoredIssue, SignalScore } from './types';
 
 export interface Repository {
   id: number;
@@ -45,6 +45,8 @@ export class TreliqDB {
     'updated_at ASC': 'updated_at ASC',
     'age_in_days DESC': 'age_in_days DESC',
     'age_in_days ASC': 'age_in_days ASC',
+    'issue_number DESC': 'issue_number DESC',
+    'issue_number ASC': 'issue_number ASC',
   };
 
   constructor(dbPath: string) {
@@ -151,6 +153,53 @@ export class TreliqDB {
       );
     `);
 
+    // Issues table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS issues (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo_id INTEGER NOT NULL,
+        issue_number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        author TEXT NOT NULL,
+        author_association TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        labels TEXT NOT NULL,
+        milestone TEXT,
+        comment_count INTEGER NOT NULL,
+        reaction_count INTEGER NOT NULL,
+        state TEXT NOT NULL DEFAULT 'open',
+        state_reason TEXT,
+        is_locked INTEGER NOT NULL,
+        assignees TEXT NOT NULL,
+        linked_prs TEXT NOT NULL,
+        total_score REAL NOT NULL,
+        intent TEXT,
+        embedding TEXT,
+        duplicate_group INTEGER,
+        is_spam INTEGER NOT NULL,
+        spam_reasons TEXT NOT NULL,
+        config_hash TEXT NOT NULL,
+        stored_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (repo_id) REFERENCES repositories(id) ON DELETE CASCADE,
+        UNIQUE(repo_id, issue_number)
+      );
+    `);
+
+    // Issue scoring signals table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS issue_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        issue_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        score REAL NOT NULL,
+        weight REAL NOT NULL,
+        reason TEXT NOT NULL,
+        FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+      );
+    `);
+
     // GitHub App installations
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS installations (
@@ -183,6 +232,10 @@ export class TreliqDB {
       CREATE INDEX IF NOT EXISTS idx_signals_pr ON scoring_signals(pr_id);
       CREATE INDEX IF NOT EXISTS idx_scan_history_repo ON scan_history(repo_id, scanned_at DESC);
       CREATE INDEX IF NOT EXISTS idx_installation_repos ON installation_repos(installation_id, repo_id);
+      CREATE INDEX IF NOT EXISTS idx_issues_repo_number ON issues(repo_id, issue_number);
+      CREATE INDEX IF NOT EXISTS idx_issues_score ON issues(total_score DESC);
+      CREATE INDEX IF NOT EXISTS idx_issues_is_spam ON issues(is_spam);
+      CREATE INDEX IF NOT EXISTS idx_issue_signals_issue ON issue_signals(issue_id);
     `);
   }
 
@@ -423,6 +476,180 @@ export class TreliqDB {
       WHERE repo_id = ? AND pr_number = ?
     `);
     stmt.run(state, repoId, prNumber);
+  }
+
+  // ========== Issue Operations ==========
+
+  /**
+   * Insert or update an issue with its scoring signals
+   * Uses transaction to ensure atomicity
+   */
+  upsertIssue(repoId: number, issue: ScoredIssue, configHash: string): number {
+    const upsert = this.db.transaction((repoId: number, issue: ScoredIssue, configHash: string) => {
+      const stmt = this.db.prepare(`
+        INSERT INTO issues (
+          repo_id, issue_number, title, body, author, author_association,
+          created_at, updated_at, labels, milestone,
+          comment_count, reaction_count, state, state_reason,
+          is_locked, assignees, linked_prs,
+          total_score, intent, embedding, duplicate_group,
+          is_spam, spam_reasons, config_hash
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?
+        )
+        ON CONFLICT(repo_id, issue_number) DO UPDATE SET
+          title = excluded.title,
+          body = excluded.body,
+          updated_at = excluded.updated_at,
+          labels = excluded.labels,
+          milestone = excluded.milestone,
+          comment_count = excluded.comment_count,
+          reaction_count = excluded.reaction_count,
+          state = excluded.state,
+          state_reason = excluded.state_reason,
+          is_locked = excluded.is_locked,
+          assignees = excluded.assignees,
+          linked_prs = excluded.linked_prs,
+          total_score = excluded.total_score,
+          intent = excluded.intent,
+          embedding = excluded.embedding,
+          duplicate_group = excluded.duplicate_group,
+          is_spam = excluded.is_spam,
+          spam_reasons = excluded.spam_reasons,
+          config_hash = excluded.config_hash,
+          stored_at = datetime('now')
+        RETURNING id
+      `);
+
+      const result = stmt.get(
+        repoId,
+        issue.number,
+        issue.title,
+        issue.body,
+        issue.author,
+        issue.authorAssociation,
+        issue.createdAt,
+        issue.updatedAt,
+        JSON.stringify(issue.labels),
+        issue.milestone || null,
+        issue.commentCount,
+        issue.reactionCount,
+        issue.state,
+        issue.stateReason || null,
+        issue.isLocked ? 1 : 0,
+        JSON.stringify(issue.assignees),
+        JSON.stringify(issue.linkedPRs),
+        issue.totalScore,
+        issue.intent || null,
+        issue.embedding ? JSON.stringify(issue.embedding) : null,
+        issue.duplicateGroup ?? null,
+        issue.isSpam ? 1 : 0,
+        JSON.stringify(issue.spamReasons),
+        configHash
+      ) as { id: number };
+
+      const issueId = result.id;
+
+      // Delete old signals and insert new ones
+      this.db.prepare('DELETE FROM issue_signals WHERE issue_id = ?').run(issueId);
+      const insertSignal = this.db.prepare(`
+        INSERT INTO issue_signals (issue_id, name, score, weight, reason)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const signal of issue.signals) {
+        insertSignal.run(issueId, signal.name, signal.score, signal.weight, signal.reason);
+      }
+
+      return issueId;
+    });
+
+    return upsert(repoId, issue, configHash);
+  }
+
+  /**
+   * Get issues with optional filtering, sorting, and pagination
+   */
+  getIssues(repoId: number, opts: GetPRsOptions = {}): ScoredIssue[] {
+    const { state, limit, offset = 0, sortBy = 'total_score DESC' } = opts;
+
+    let sql = 'SELECT * FROM issues WHERE repo_id = ?';
+    const params: any[] = [repoId];
+
+    if (state) {
+      sql += ' AND state = ?';
+      params.push(state);
+    }
+
+    const safeSortBy = TreliqDB.ALLOWED_SORT_COLUMNS[sortBy] ?? 'total_score DESC';
+    sql += ` ORDER BY ${safeSortBy}`;
+
+    if (limit) {
+      sql += ' LIMIT ? OFFSET ?';
+      params.push(limit, offset);
+    }
+
+    const stmt = this.db.prepare(sql);
+    const rows = stmt.all(...params);
+    return rows.map((row: any) => this.rowToIssue(row));
+  }
+
+  /**
+   * Get a single issue by number
+   */
+  getIssueByNumber(repoId: number, issueNumber: number): ScoredIssue | null {
+    const stmt = this.db.prepare('SELECT * FROM issues WHERE repo_id = ? AND issue_number = ?');
+    const row = stmt.get(repoId, issueNumber);
+    return row ? this.rowToIssue(row as any) : null;
+  }
+
+  /**
+   * Get signals for a specific issue
+   */
+  private getSignalsForIssue(issueId: number): SignalScore[] {
+    const stmt = this.db.prepare(`
+      SELECT name, score, weight, reason
+      FROM issue_signals
+      WHERE issue_id = ?
+      ORDER BY weight DESC
+    `);
+    return stmt.all(issueId) as SignalScore[];
+  }
+
+  /**
+   * Convert database row to ScoredIssue object
+   */
+  private rowToIssue(row: any): ScoredIssue {
+    const signals = this.getSignalsForIssue(row.id);
+    return {
+      number: row.issue_number,
+      title: row.title,
+      body: row.body,
+      author: row.author,
+      authorAssociation: row.author_association,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      labels: JSON.parse(row.labels),
+      milestone: row.milestone || undefined,
+      commentCount: row.comment_count,
+      reactionCount: row.reaction_count,
+      state: row.state,
+      stateReason: row.state_reason || null,
+      isLocked: Boolean(row.is_locked),
+      assignees: JSON.parse(row.assignees),
+      linkedPRs: JSON.parse(row.linked_prs),
+      totalScore: row.total_score,
+      signals,
+      intent: row.intent || undefined,
+      embedding: row.embedding ? JSON.parse(row.embedding) : undefined,
+      duplicateGroup: row.duplicate_group ?? undefined,
+      isSpam: Boolean(row.is_spam),
+      spamReasons: JSON.parse(row.spam_reasons),
+    };
   }
 
   /**
@@ -686,8 +913,17 @@ export class TreliqDB {
    * Clear all PR data, scoring signals, and scan history for a repository
    * Repository entry itself is preserved
    */
-  clearRepository(repoId: number): { deletedPRs: number; deletedScans: number } {
+  clearRepository(repoId: number): { deletedPRs: number; deletedIssues: number; deletedScans: number } {
     const clear = this.db.transaction((repoId: number) => {
+      // Delete issue signals
+      this.db.prepare(`
+        DELETE FROM issue_signals
+        WHERE issue_id IN (SELECT id FROM issues WHERE repo_id = ?)
+      `).run(repoId);
+
+      // Delete issues
+      const issueResult = this.db.prepare('DELETE FROM issues WHERE repo_id = ?').run(repoId);
+
       // Delete scoring signals for all PRs in this repo
       this.db.prepare(`
         DELETE FROM scoring_signals
@@ -705,6 +941,7 @@ export class TreliqDB {
 
       return {
         deletedPRs: prResult.changes,
+        deletedIssues: issueResult.changes,
         deletedScans: scanResult.changes,
       };
     });

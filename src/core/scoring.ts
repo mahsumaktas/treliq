@@ -2,10 +2,49 @@
  * ScoringEngine — Multi-signal PR scoring with LLM-assisted analysis
  */
 
-import type { PRData, ScoredPR, SignalScore } from './types';
+import type { PRData, ScoredPR, SignalScore, DiffAnalysis } from './types';
 import type { LLMProvider } from './provider';
+import { IntentClassifier, type IntentResult } from './intent';
 import { ConcurrencyController } from './concurrency';
 import { createLogger } from './logger';
+import type { IntentCategory } from './types';
+
+/** Intent-aware weight profiles — overrides for specific signals per intent */
+const INTENT_PROFILES: Record<IntentCategory, Partial<Record<string, number>>> = {
+  bugfix: {
+    ci_status: 0.20,
+    test_coverage: 0.18,
+    mergeability: 0.15,
+    diff_size: 0.04,
+  },
+  feature: {
+    body_quality: 0.08,
+    test_coverage: 0.15,
+    scope_coherence: 0.08,
+  },
+  refactor: {
+    test_coverage: 0.18,
+    breaking_change: 0.08,
+    scope_coherence: 0.10,
+  },
+  dependency: {
+    ci_status: 0.25,
+    diff_size: 0.02,
+    body_quality: 0.02,
+    test_coverage: 0.15,
+  },
+  docs: {
+    diff_size: 0.02,
+    ci_status: 0.05,
+    test_coverage: 0.03,
+    body_quality: 0.08,
+  },
+  chore: {
+    ci_status: 0.20,
+    breaking_change: 0.06,
+    diff_size: 0.03,
+  },
+};
 
 const log = createLogger('scoring');
 
@@ -14,15 +53,22 @@ export class ScoringEngine {
   private trustContributors: boolean;
   private reputationScores = new Map<string, number>();
   private concurrency: ConcurrencyController;
+  private intentClassifier: IntentClassifier;
+  private diffAnalyses = new Map<number, DiffAnalysis>();
 
   constructor(provider?: LLMProvider, trustContributors = false, maxConcurrent = 5) {
     this.provider = provider;
     this.trustContributors = trustContributors;
     this.concurrency = new ConcurrencyController(maxConcurrent);
+    this.intentClassifier = new IntentClassifier(provider);
   }
 
   setReputation(login: string, score: number) {
     this.reputationScores.set(login, score);
+  }
+
+  setDiffAnalysis(prNumber: number, analysis: DiffAnalysis): void {
+    this.diffAnalyses.set(prNumber, analysis);
   }
 
   /** Score multiple PRs in parallel with concurrency control */
@@ -49,6 +95,8 @@ export class ScoringEngine {
   }
 
   async score(pr: PRData): Promise<ScoredPR> {
+    const intentResult = await this.intentClassifier.classify(pr.title, pr.body ?? '', pr.changedFiles);
+
     const signals: SignalScore[] = [
       this.scoreCI(pr),
       this.scoreDiffSize(pr),
@@ -70,7 +118,26 @@ export class ScoringEngine {
       this.scoreRequestedReviewers(pr),
       this.scoreScopeCoherence(pr),
       this.scoreComplexity(pr),
+      this.scoreIntent(intentResult),
     ];
+
+    // Apply intent-aware weight profiles
+    const profile = INTENT_PROFILES[intentResult.intent];
+    if (profile) {
+      for (const signal of signals) {
+        if (profile[signal.name] !== undefined) {
+          signal.weight = profile[signal.name]!;
+        }
+      }
+      // Normalize weights to sum=1.0
+      const rawTotal = signals.reduce((sum, s) => sum + s.weight, 0);
+      if (rawTotal > 0 && rawTotal !== 1.0) {
+        const factor = 1.0 / rawTotal;
+        for (const signal of signals) {
+          signal.weight *= factor;
+        }
+      }
+    }
 
     const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
     const heuristicScore = totalWeight > 0
@@ -96,10 +163,21 @@ export class ScoringEngine {
       }
     }
 
-    // Blend: 0.4 heuristic + 0.6 LLM, or heuristic-only if LLM failed
-    const totalScore = llmScore !== undefined
-      ? Math.round(0.4 * heuristicScore + 0.6 * llmScore)
-      : Math.round(heuristicScore);
+    // Blend: new formula when diff available
+    const diffAnalysis = this.diffAnalyses.get(pr.number);
+    let totalScore: number;
+    if (llmScore !== undefined && diffAnalysis) {
+      // 0.4 heuristic + 0.3 LLM text + 0.3 LLM diff
+      totalScore = Math.round(0.4 * heuristicScore + 0.3 * llmScore + 0.3 * diffAnalysis.codeQuality);
+      // Override risk from diff (more reliable)
+      if (diffAnalysis.riskAssessment !== 'medium') {
+        llmRisk = diffAnalysis.riskAssessment === 'critical' ? 'high' : diffAnalysis.riskAssessment;
+      }
+    } else if (llmScore !== undefined) {
+      totalScore = Math.round(0.4 * heuristicScore + 0.6 * llmScore);
+    } else {
+      totalScore = Math.round(heuristicScore);
+    }
 
     return {
       ...pr,
@@ -111,6 +189,8 @@ export class ScoringEngine {
       llmScore,
       llmRisk,
       llmReason,
+      intent: intentResult.intent,
+      diffAnalysis,
     };
   }
 
@@ -404,6 +484,18 @@ export class ScoringEngine {
       score,
       weight: 0.06,
       reason: `${label}: ${dirCount} area(s) [${[...topDirs].slice(0, 4).join(', ')}]`,
+    };
+  }
+
+  private scoreIntent(result: IntentResult): SignalScore {
+    const scores: Record<string, number> = {
+      bugfix: 90, feature: 85, refactor: 60, dependency: 35, docs: 30, chore: 25,
+    };
+    return {
+      name: 'intent',
+      score: scores[result.intent] ?? 50,
+      weight: 0.15,
+      reason: `${result.intent} (${result.reason})`,
     };
   }
 
