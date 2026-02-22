@@ -94,4 +94,47 @@ describe('provider', () => {
     expect(createProvider('anthropic', 'k').name).toBe('anthropic');
     expect(() => createProvider('unknown' as any, 'k')).toThrow('Unknown provider: unknown');
   });
+
+  describe('batch embedding', () => {
+    it('GeminiProvider batch embeds multiple texts', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockFetchResponse({
+        embeddings: [
+          { values: [0.1, 0.2] },
+          { values: [0.3, 0.4] },
+        ],
+      }));
+
+      const provider = new GeminiProvider('gemini-key');
+      const result = await provider.generateEmbeddingBatch(['text1', 'text2']);
+
+      expect(result).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('batchEmbedContents'),
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('OpenAIProvider batch embeds multiple texts', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(mockFetchResponse({
+        data: [
+          { embedding: [0.5, 0.6] },
+          { embedding: [0.7, 0.8] },
+        ],
+      }));
+
+      const provider = new OpenAIProvider('openai-key');
+      const result = await provider.generateEmbeddingBatch(['text1', 'text2']);
+
+      expect(result).toEqual([[0.5, 0.6], [0.7, 0.8]]);
+    });
+
+    it('GeminiProvider batch embedding throws on error', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(
+        mockFetchResponse('error', false, 500),
+      );
+
+      const provider = new GeminiProvider('gemini-key');
+      await expect(provider.generateEmbeddingBatch(['text'])).rejects.toThrow('Gemini Batch Embedding 500');
+    });
+  });
 });

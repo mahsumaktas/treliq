@@ -19,6 +19,7 @@ function defaultMaxTokens(model: string): number {
 export interface LLMProvider {
   generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string>;
   generateEmbedding(text: string): Promise<number[]>;
+  generateEmbeddingBatch?(texts: string[]): Promise<number[][]>;
   name: string;
   readonly supportsEmbeddings?: boolean;
 }
@@ -65,6 +66,23 @@ export class GeminiProvider implements LLMProvider {
     if (!res.ok) throw new Error(`Embedding API error: ${res.status} ${await res.text()}`);
     const data = await res.json() as { embedding: { values: number[] } };
     return data.embedding.values;
+  }
+
+  async generateEmbeddingBatch(texts: string[]): Promise<number[][]> {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
+      body: JSON.stringify({
+        requests: texts.map(text => ({
+          model: 'models/gemini-embedding-001',
+          content: { parts: [{ text }] },
+        })),
+      }),
+    });
+    if (!res.ok) throw new Error(`Gemini Batch Embedding ${res.status}`);
+    const data = await res.json() as { embeddings: Array<{ values: number[] }> };
+    return data.embeddings.map(e => e.values);
   }
 }
 
@@ -117,6 +135,23 @@ export class OpenAIProvider implements LLMProvider {
       throw new Error('Empty embedding returned from OpenAI');
     }
     return embedding;
+  }
+
+  async generateEmbeddingBatch(texts: string[]): Promise<number[][]> {
+    const res = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'text-embedding-3-small',
+        input: texts,
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI Batch Embedding ${res.status}`);
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    return data.data.map(d => d.embedding);
   }
 }
 
