@@ -390,6 +390,97 @@ describe('ScoringEngine', () => {
     });
   });
 
+  describe('Diff-enriched scoring blend', () => {
+    it('uses 0.4/0.3/0.3 blend when diff analysis available', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Good PR"}';
+
+      const engine = new ScoringEngine(provider);
+      engine.setDiffAnalysis(1, {
+        prNumber: 1,
+        codeQuality: 90,
+        riskAssessment: 'low',
+        changeType: 'modifying',
+        affectedAreas: ['core'],
+        summary: 'Improves error handling',
+      });
+
+      const pr = createPRData({ number: 1, title: 'fix: improve error handling' });
+      const scored = await engine.score(pr);
+
+      // With diff: 0.4 * heuristic + 0.3 * 80 + 0.3 * 90
+      expect(scored.diffAnalysis).toBeDefined();
+      expect(scored.diffAnalysis!.codeQuality).toBe(90);
+      expect(scored.totalScore).toBeGreaterThan(0);
+
+      // Verify blend uses diff: totalScore should differ from 0.4*h + 0.6*80
+      const heuristicScore = scored.signals.reduce((sum, s) => sum + s.score * s.weight, 0) /
+                            scored.signals.reduce((sum, s) => sum + s.weight, 0);
+      const expectedWithDiff = Math.round(0.4 * heuristicScore + 0.3 * 80 + 0.3 * 90);
+      expect(scored.totalScore).toBe(expectedWithDiff);
+    });
+
+    it('overrides llmRisk from diff riskAssessment', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+
+      const engine = new ScoringEngine(provider);
+      engine.setDiffAnalysis(1, {
+        prNumber: 1,
+        codeQuality: 50,
+        riskAssessment: 'high',
+        changeType: 'removing',
+        affectedAreas: ['database'],
+        summary: 'Drops migration table',
+      });
+
+      const pr = createPRData({ number: 1 });
+      const scored = await engine.score(pr);
+
+      expect(scored.llmRisk).toBe('high'); // Overridden by diff
+    });
+
+    it('does not override risk when diff says medium', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+
+      const engine = new ScoringEngine(provider);
+      engine.setDiffAnalysis(1, {
+        prNumber: 1,
+        codeQuality: 70,
+        riskAssessment: 'medium',
+        changeType: 'modifying',
+        affectedAreas: [],
+        summary: 'Normal change',
+      });
+
+      const pr = createPRData({ number: 1 });
+      const scored = await engine.score(pr);
+
+      expect(scored.llmRisk).toBe('low'); // Not overridden (diff says medium = default)
+    });
+
+    it('maps critical diff risk to high llmRisk', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+
+      const engine = new ScoringEngine(provider);
+      engine.setDiffAnalysis(1, {
+        prNumber: 1,
+        codeQuality: 30,
+        riskAssessment: 'critical',
+        changeType: 'removing',
+        affectedAreas: ['auth'],
+        summary: 'Removes auth middleware',
+      });
+
+      const pr = createPRData({ number: 1 });
+      const scored = await engine.score(pr);
+
+      expect(scored.llmRisk).toBe('high'); // critical -> high
+    });
+  });
+
   describe('Signal coverage', () => {
     it('should generate all 18 signals', async () => {
       const engine = new ScoringEngine();
