@@ -2,18 +2,18 @@
   <img src="docs/logo.png" alt="Treliq" width="140" />
 </p>
 
-<h3 align="center">AI-Powered PR Triage for Maintainers & Enterprise Teams</h3>
+<h3 align="center">AI-Powered PR & Issue Triage for Maintainers & Enterprise Teams</h3>
 
 <p align="center">
-  <em>"Too many open PRs. Which ones should I review and merge first?"</em>
+  <em>"Too many open PRs and issues. Which ones should I review, merge, or close first?"</em>
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/tests-244_passing-2DA44E?style=flat-square" alt="Tests" />
-  <img src="https://img.shields.io/badge/signals-20-8B5CF6?style=flat-square" alt="20 Signals" />
+  <img src="https://img.shields.io/badge/tests-345_passing-2DA44E?style=flat-square" alt="Tests" />
+  <img src="https://img.shields.io/badge/signals-21-8B5CF6?style=flat-square" alt="21 Signals" />
   <img src="https://img.shields.io/badge/providers-4-FF6600?style=flat-square" alt="4 Providers" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
@@ -23,7 +23,7 @@
 
 ---
 
-Treliq is an intelligent PR triage system that **deduplicates, scores, and ranks** pull requests so maintainers can focus on merging what matters. Available as a **CLI tool**, **persistent server with REST API**, and **GitHub Action**.
+Treliq is an intelligent triage system that **deduplicates, scores, and ranks** pull requests and issues so maintainers can focus on what matters. Auto-close duplicates, auto-merge high-quality PRs, and auto-label by intent. Available as a **CLI tool**, **persistent server with REST API**, and **GitHub Action**.
 
 ## The Problem
 
@@ -32,6 +32,8 @@ Existing tools review code (CodeRabbit, Greptile, Copilot). None answer the main
 - **"These 5 PRs fix the same bug — which one is best?"**
 - **"Does this PR align with our roadmap?"**
 - **"Show me the top 10 PRs I should review today."**
+- **"Which issues have linked PRs? Which are stale?"**
+- **"Auto-close all the duplicate PRs and spam issues."**
 
 **Code Review ≠ PR Triage. Treliq fills the gap.**
 
@@ -43,9 +45,64 @@ Existing tools review code (CodeRabbit, Greptile, Copilot). None answer the main
 ### ⚡ Zero Setup / Free Mode
 Not ready to trust your codebase with an LLM? Try the 100% free, local heuristic engine with zero API keys required.
 ```bash
-# Score PRs based on 20 signals (CI, coverage, conflicts, etc.) completely locally
+# Score PRs based on 21 signals (CI, coverage, conflicts, intent, etc.) completely locally
 npx treliq scan -r owner/repo --no-llm
+
+# Also scan issues alongside PRs
+npx treliq scan -r owner/repo --no-llm --include-issues
 ```
+
+## What's New in v0.7.0
+
+### Intent Classification (Signal #21)
+3-tier detection pipeline classifies every PR and issue into one of 6 categories:
+
+| Category | Score | Example |
+|----------|-------|---------|
+| bugfix | 90 | `fix: resolve memory leak in scanner` |
+| feature | 85 | `feat: add dark mode toggle` |
+| refactor | 60 | `refactor: extract scoring engine` |
+| dependency | 35 | `chore(deps): bump express to v5` |
+| docs | 30 | `docs: update API reference` |
+| chore | 25 | `ci: add coverage upload step` |
+
+Detection priority: **Conventional commit prefix** (100% confidence) → **LLM classification** (with JSON parsing) → **Heuristic keyword matching** (fallback).
+
+### Full Issue Triage
+Issues are now first-class citizens. Scan, score, deduplicate, and take action on issues alongside PRs.
+
+- **`scan-issues` command** — Standalone issue scanning with 12 dedicated signals
+- **`--include-issues` flag** — Scan issues alongside PRs in a single `scan` run
+- **Cross-type dedup** — PRs and issues embedded in the same vector space; clusters can be `pr`, `issue`, or `mixed`
+- **12 Issue Signals**: staleness, body quality, label priority, activity, contributor trust, spam detection, milestone, reactions, linked PR status, assignee, reproducibility info, intent
+
+### Auto-Actions Engine
+Two-phase architecture: **ActionEngine** plans actions (pure, testable), **ActionExecutor** executes via GitHub API (re-fetches state before each action).
+
+```bash
+# Preview what would happen (dry-run, default)
+npx treliq scan -r owner/repo --auto-close-dupes --auto-close-spam --auto-merge --auto-label-intent
+
+# Execute for real
+npx treliq scan -r owner/repo --auto-close-dupes --auto-close-spam --auto-merge --auto-label-intent --confirm
+```
+
+| Action | Flag | Description |
+|--------|------|-------------|
+| Close duplicates | `--auto-close-dupes` | Keeps best-scored item in each cluster, closes the rest with comment |
+| Close spam | `--auto-close-spam` | Closes items flagged as spam |
+| Auto-merge | `--auto-merge` | Merges PRs with score >= threshold, approved, CI pass, no conflicts |
+| Label intent | `--auto-label-intent` | Applies `intent:bugfix`, `intent:feature`, etc. labels |
+
+Safety: **dry-run by default**, `--confirm` required for execution, batch limit 50, `--exclude` list, stale state re-check before each action.
+
+### Test Suite (345 tests)
+- 101 new tests across 23 test suites
+- Unit tests: IntentClassifier (24), ActionEngine (18), ActionExecutor (18), IssueScoringEngine (14), IssueScanner (6), Issue GraphQL (5), cross-type dedup (4), intent signal (6)
+- Integration tests: Issue CRUD in SQLite (5), scoring engine pipeline
+- Test fixtures: `createIssueData()`, `createScoredIssue()` factories
+
+---
 
 ## What's New in v0.6.0
 
@@ -153,7 +210,7 @@ Tested on OpenClaw PRs with 4 models:
 - 📡 **Real-time SSE** — Live dashboard updates via Server-Sent Events
 - 🔗 **GitHub Webhooks** — Auto-score PRs on open/update/close with HMAC-SHA256 verification
 - 🔍 **GraphQL Fetching** — ~80% fewer API calls using GitHub's GraphQL API
-- 📊 **20-Signal Scoring** — Includes new Scope Coherence + PR Complexity analysis
+- 📊 **21-Signal Scoring** — Includes Scope Coherence, PR Complexity, and Intent analysis
 - 🗄️ **SQLite Persistence** — Full scan history, PR state tracking, repository management
 - ⚡ **Parallel LLM Scoring** — Concurrency-controlled parallel scoring with configurable limits
 - 🚦 **Rate Limit Manager** — Intelligent GitHub API pacing with automatic backoff
@@ -186,12 +243,16 @@ graph TB
     end
 
     subgraph Core
-        Scanner[Scanner]
-        Scoring[20-Signal Scoring Engine]
+        Scanner[PR Scanner]
+        IScan[Issue Scanner]
+        Scoring[21-Signal PR Scoring]
+        IScore[12-Signal Issue Scoring]
+        Intent[Intent Classifier]
         LLM[Multi-Provider LLM<br/>Gemini · OpenAI · Anthropic · OpenRouter]
-        Dedup[Embedding Dedup<br/>LanceDB]
+        Dedup[Cross-type Dedup<br/>LanceDB]
         Vision[Vision Doc Alignment]
-        Rep[Contributor Reputation]
+        Actions[Action Engine<br/>close · merge · label]
+        Executor[Action Executor]
     end
 
     subgraph Persistence
@@ -213,19 +274,25 @@ graph TB
     end
 
     GH_REST & GH_GQL --> Scanner
+    GH_REST & GH_GQL --> IScan
     WH --> REST
     Scanner --> Scoring
+    IScan --> IScore
+    Scoring --> Intent
+    IScore --> Intent
     Scoring --> LLM
-    Scanner --> Dedup
+    IScore --> LLM
+    Scanner & IScan --> Dedup
     Scanner --> Vision
-    Scoring --> Rep
-    Scoring --> SQLite
+    Scoring & IScore --> SQLite
+    Actions --> Executor
+    Executor --> GH_REST
     Cache --> Scanner
     REST --> Scanner
     REST --> SSE
     Scheduler --> Scanner
     Scheduler --> Notif
-    CLI --> Scanner
+    CLI --> Scanner & IScan & Actions
     Dashboard --> REST
     Dashboard --> SSE
     Action --> CLI
@@ -252,11 +319,36 @@ npx treliq score -r owner/repo -n 123 -f markdown
 # Scan all open PRs (up to 100)
 npx treliq scan -r owner/repo -m 100 -f json
 
+# Scan PRs + Issues together
+npx treliq scan -r owner/repo --include-issues -f json
+
+# Scan only issues
+npx treliq scan-issues -r owner/repo -m 200 -f table
+
 # Find duplicate PR clusters
 npx treliq dedup -r owner/repo
 
 # Trust known contributors (exempt from spam detection)
 npx treliq scan -r owner/repo --trust-contributors
+```
+
+### Auto-Actions
+
+```bash
+# Preview auto-actions (dry-run — safe, no changes made)
+npx treliq scan -r owner/repo \
+  --auto-close-dupes \
+  --auto-close-spam \
+  --auto-merge --merge-threshold 90 --merge-method squash \
+  --auto-label-intent
+
+# Execute auto-actions for real
+npx treliq scan -r owner/repo \
+  --auto-close-dupes --auto-close-spam --auto-merge \
+  --auto-label-intent --confirm
+
+# Exclude specific items from auto-actions
+npx treliq scan -r owner/repo --auto-close-dupes --confirm --exclude 42,99,101
 ```
 
 ### Server Mode
@@ -289,6 +381,7 @@ The server exposes:
 | `POST /api/repos/:owner/:repo/scan` | Trigger a new scan |
 | `GET /api/repos/:owner/:repo/scans` | Scan history |
 | `GET /api/repos/:owner/:repo/spam` | Spam PRs |
+| `GET /api/repos/:owner/:repo/issues` | List scored issues (sortable, filterable) |
 | `GET /api/events` | SSE real-time stream |
 | `POST /webhooks` | GitHub webhook receiver |
 | `GET /setup` | GitHub App setup guide |
@@ -311,7 +404,7 @@ npx treliq scan -r owner/repo -p openai --api-key sk-...
 # Anthropic (embeddings auto-fallback to Gemini/OpenAI)
 npx treliq scan -r owner/repo -p anthropic --api-key sk-ant-...
 
-# Heuristic-only (no API keys needed, 20 signals)
+# Heuristic-only (no API keys needed, 21 signals)
 npx treliq scan -r owner/repo --no-llm
 ```
 
@@ -329,7 +422,7 @@ npx treliq init
 # See example output
 npx treliq demo
 
-# Heuristic-only scoring (20 signals, no LLM)
+# Heuristic-only scoring (21 signals, no LLM)
 npx treliq scan -r owner/repo --no-llm
 ```
 
@@ -382,7 +475,7 @@ jobs:
             });
 ```
 
-## 20-Signal Scoring
+## 21-Signal PR Scoring
 
 | # | Signal | Weight | Description |
 |---|--------|--------|-------------|
@@ -404,10 +497,28 @@ jobs:
 | 16 | Body Quality | 0.04 | Description length, checklists, screenshots |
 | 17 | Activity | 0.04 | Comment count — engagement signal |
 | 18 | Breaking Change | 0.04 | Risky files, large deletions, `!:` in title |
-| 19 | **Scope Coherence** | 0.06 | Directory spread, title-to-files alignment |
-| 20 | **PR Complexity** | 0.05 | Size analysis, AI detection, overengineering |
+| 19 | Scope Coherence | 0.06 | Directory spread, title-to-files alignment |
+| 20 | PR Complexity | 0.05 | Size analysis, AI detection, overengineering |
+| 21 | **Intent** | 0.08 | bugfix/feature/refactor/dependency/docs/chore classification |
 
 When an LLM provider is configured, a **quality score** (0–100) is blended at **60% LLM / 40% heuristic**.
+
+### 12-Signal Issue Scoring
+
+| # | Signal | Weight | Description |
+|---|--------|--------|-------------|
+| 1 | Staleness | 0.08 | Days since opened — fresh issues preferred |
+| 2 | Body Quality | 0.08 | Description length, checklists |
+| 3 | Label Priority | 0.07–0.10 | High-priority labels (bug, p0, security) boosted |
+| 4 | Activity | 0.08 | Comment count — engagement signal |
+| 5 | Contributor Trust | 0.08 | Author association (owner/member/contributor) |
+| 6 | Spam Detection | 0.10 | Empty body, short title, AI language markers |
+| 7 | Milestone | 0.07 | Issues attached to milestones score higher |
+| 8 | Reactions | 0.10 | Community interest via emoji reactions |
+| 9 | Linked PR | 0.08 | Has linked PR(s) attempting to resolve |
+| 10 | Assignee | 0.07 | Assigned = someone is working on it |
+| 11 | Reproducibility | 0.07 | Steps to reproduce, expected/actual, code blocks |
+| 12 | Intent | 0.09 | bugfix/feature/refactor/dependency/docs/chore |
 
 ## Configuration
 
@@ -493,6 +604,6 @@ MIT © [Mahsum Aktaş](https://github.com/mahsumaktas)
 ---
 
 <p align="center">
-  <em>Built because 3,100 PRs won't triage themselves.</em>
+  <em>Built because 3,100 PRs and 2,000 issues won't triage themselves.</em>
 </p>
 <!-- webhook test Sun Feb 22 03:35:33 +03 2026 -->
