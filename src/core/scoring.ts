@@ -2,7 +2,7 @@
  * ScoringEngine — Multi-signal PR scoring with LLM-assisted analysis
  */
 
-import type { PRData, ScoredPR, SignalScore } from './types';
+import type { PRData, ScoredPR, SignalScore, DiffAnalysis } from './types';
 import type { LLMProvider } from './provider';
 import { IntentClassifier, type IntentResult } from './intent';
 import { ConcurrencyController } from './concurrency';
@@ -54,6 +54,7 @@ export class ScoringEngine {
   private reputationScores = new Map<string, number>();
   private concurrency: ConcurrencyController;
   private intentClassifier: IntentClassifier;
+  private diffAnalyses = new Map<number, DiffAnalysis>();
 
   constructor(provider?: LLMProvider, trustContributors = false, maxConcurrent = 5) {
     this.provider = provider;
@@ -64,6 +65,10 @@ export class ScoringEngine {
 
   setReputation(login: string, score: number) {
     this.reputationScores.set(login, score);
+  }
+
+  setDiffAnalysis(prNumber: number, analysis: DiffAnalysis): void {
+    this.diffAnalyses.set(prNumber, analysis);
   }
 
   /** Score multiple PRs in parallel with concurrency control */
@@ -158,10 +163,21 @@ export class ScoringEngine {
       }
     }
 
-    // Blend: 0.4 heuristic + 0.6 LLM, or heuristic-only if LLM failed
-    const totalScore = llmScore !== undefined
-      ? Math.round(0.4 * heuristicScore + 0.6 * llmScore)
-      : Math.round(heuristicScore);
+    // Blend: new formula when diff available
+    const diffAnalysis = this.diffAnalyses.get(pr.number);
+    let totalScore: number;
+    if (llmScore !== undefined && diffAnalysis) {
+      // 0.4 heuristic + 0.3 LLM text + 0.3 LLM diff
+      totalScore = Math.round(0.4 * heuristicScore + 0.3 * llmScore + 0.3 * diffAnalysis.codeQuality);
+      // Override risk from diff (more reliable)
+      if (diffAnalysis.riskAssessment !== 'medium') {
+        llmRisk = diffAnalysis.riskAssessment === 'critical' ? 'high' : diffAnalysis.riskAssessment;
+      }
+    } else if (llmScore !== undefined) {
+      totalScore = Math.round(0.4 * heuristicScore + 0.6 * llmScore);
+    } else {
+      totalScore = Math.round(heuristicScore);
+    }
 
     return {
       ...pr,
@@ -174,6 +190,7 @@ export class ScoringEngine {
       llmRisk,
       llmReason,
       intent: intentResult.intent,
+      diffAnalysis,
     };
   }
 
