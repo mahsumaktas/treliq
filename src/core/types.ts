@@ -108,12 +108,15 @@ export interface ScoredIssue extends IssueData {
   spamReasons: string[];
 }
 
+export type TriageItem = ScoredPR | ScoredIssue;
+
 export interface DedupCluster {
   id: number;
-  prs: ScoredPR[];
-  bestPR: number;              // PR number of recommended best
+  prs: TriageItem[];           // Items in cluster (name kept for backward compat)
+  bestPR: number;              // Item number of recommended best
   similarity: number;          // Average similarity within cluster
   reason: string;              // Why these are grouped
+  type?: 'pr' | 'issue' | 'mixed';
 }
 
 export interface TreliqResult {

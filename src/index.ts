@@ -14,7 +14,7 @@ export { TreliqScanner } from './core/scanner';
 export { DedupEngine } from './core/dedup';
 export { ScoringEngine } from './core/scoring';
 export { VisionChecker } from './core/vision';
-export type { PRData, ScoredPR, DedupCluster, TreliqConfig } from './core/types';
+export type { PRData, ScoredPR, DedupCluster, TreliqConfig, TriageItem } from './core/types';
 export { loadCache, saveCache, configHash } from './core/cache';
 export { TEST_PATTERNS } from './core/scanner';
 export { createProvider, GeminiProvider, OpenAIProvider, AnthropicProvider } from './core/provider';

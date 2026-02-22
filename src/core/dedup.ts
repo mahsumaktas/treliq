@@ -3,7 +3,7 @@
  * Supports both brute-force O(n²) and LanceDB ANN O(n log n) modes.
  */
 
-import type { ScoredPR, DedupCluster } from './types';
+import type { DedupCluster, TriageItem } from './types';
 import type { LLMProvider } from './provider';
 import { VectorStore, type VectorRecord } from './vectorstore';
 import { ConcurrencyController } from './concurrency';
@@ -36,23 +36,23 @@ export class DedupEngine {
     }
   }
 
-  async findDuplicates(prs: ScoredPR[], cc?: ConcurrencyController): Promise<DedupCluster[]> {
-    if (prs.length < 2) return [];
+  async findDuplicates(items: TriageItem[], cc?: ConcurrencyController): Promise<DedupCluster[]> {
+    if (items.length < 2) return [];
 
-    // 1. Embed all PRs — batch first, parallel individual fallback
-    log.info({ count: prs.length }, 'Embedding PRs');
+    // 1. Embed all items — batch first, parallel individual fallback
+    log.info({ count: items.length }, 'Embedding items');
     const embeddings: Map<number, number[]> = new Map();
 
     const hasBatch = typeof (this.provider as any).generateEmbeddingBatch === 'function';
     let batchDone = false;
 
     if (hasBatch) {
-      log.info({ count: prs.length }, 'Using batch embedding');
+      log.info({ count: items.length }, 'Using batch embedding');
       const BATCH_SIZE = 100;
       try {
-        for (let i = 0; i < prs.length; i += BATCH_SIZE) {
-          const batch = prs.slice(i, i + BATCH_SIZE);
-          const texts = batch.map(pr => this.prToText(pr));
+        for (let i = 0; i < items.length; i += BATCH_SIZE) {
+          const batch = items.slice(i, i + BATCH_SIZE);
+          const texts = batch.map(item => this.itemToText(item));
           const results = await (this.provider as any).generateEmbeddingBatch(texts);
           for (let j = 0; j < batch.length; j++) {
             batch[j].embedding = results[j];
@@ -65,19 +65,19 @@ export class DedupEngine {
       }
     }
 
-    // For PRs without embedding (batch failed or no batch support): parallel individual
+    // For items without embedding (batch failed or no batch support): parallel individual
     // If an external ConcurrencyController is provided, use it (enables adaptive throttling)
     if (!batchDone) {
-      const remaining = prs.filter(p => !p.embedding);
+      const remaining = items.filter(p => !p.embedding);
       if (remaining.length > 0) {
-        log.info({ count: remaining.length }, 'Embedding PRs individually (parallel)');
+        log.info({ count: remaining.length }, 'Embedding items individually (parallel)');
         const controller = cc ?? new ConcurrencyController(15, 2, 500);
         const results = await Promise.allSettled(
-          remaining.map(pr => controller.execute(async () => {
-            const text = this.prToText(pr);
+          remaining.map(item => controller.execute(async () => {
+            const text = this.itemToText(item);
             const embedding = await this.embed(text);
-            pr.embedding = embedding;
-            embeddings.set(pr.number, embedding);
+            item.embedding = embedding;
+            embeddings.set(item.number, embedding);
           }))
         );
         let failed = 0;
@@ -89,32 +89,32 @@ export class DedupEngine {
     }
 
     // 2. Find similar pairs — use VectorStore (ANN) or brute-force
-    const embeddedPRs = prs.filter(p => p.embedding);
+    const embeddedItems = items.filter(p => p.embedding);
     let pairs: Array<{ a: number; b: number; sim: number }>;
 
-    if (this.vectorStore && embeddedPRs.length > 50) {
-      // Use LanceDB ANN for large sets (>50 PRs)
-      log.info({ count: embeddedPRs.length }, 'Using LanceDB ANN search');
-      const records: VectorRecord[] = embeddedPRs.map(pr => ({
-        prNumber: pr.number,
-        embedding: pr.embedding!,
+    if (this.vectorStore && embeddedItems.length > 50) {
+      // Use LanceDB ANN for large sets (>50 items)
+      log.info({ count: embeddedItems.length }, 'Using LanceDB ANN search');
+      const records: VectorRecord[] = embeddedItems.map(item => ({
+        prNumber: item.number,
+        embedding: item.embedding!,
       }));
       pairs = await this.vectorStore.findAllPairsAboveThreshold(records, this.relatedThreshold);
     } else {
       // Brute-force cosine similarity for small sets
       pairs = [];
-      for (let i = 0; i < embeddedPRs.length; i++) {
-        for (let j = i + 1; j < embeddedPRs.length; j++) {
-          const sim = this.cosineSimilarity(embeddedPRs[i].embedding!, embeddedPRs[j].embedding!);
+      for (let i = 0; i < embeddedItems.length; i++) {
+        for (let j = i + 1; j < embeddedItems.length; j++) {
+          const sim = this.cosineSimilarity(embeddedItems[i].embedding!, embeddedItems[j].embedding!);
           if (sim >= this.relatedThreshold) {
-            pairs.push({ a: embeddedPRs[i].number, b: embeddedPRs[j].number, sim });
+            pairs.push({ a: embeddedItems[i].number, b: embeddedItems[j].number, sim });
           }
         }
       }
     }
 
     // 3. Cluster via union-find
-    const prMap = new Map(prs.map(p => [p.number, p]));
+    const itemMap = new Map(items.map(p => [p.number, p]));
     const parent = new Map<number, number>();
     const find = (x: number): number => {
       if (!parent.has(x)) parent.set(x, x);
@@ -144,8 +144,8 @@ export class DedupEngine {
     let id = 0;
     for (const [, members] of groups) {
       if (members.length < 2) continue;
-      const clusterPRs = members.map(n => prMap.get(n)!).filter(Boolean);
-      const bestPR = clusterPRs.reduce((a, b) => a.totalScore >= b.totalScore ? a : b);
+      const clusterItems = members.map(n => itemMap.get(n)!).filter(Boolean);
+      const bestItem = clusterItems.reduce((a, b) => a.totalScore >= b.totalScore ? a : b);
 
       // Avg similarity
       let simSum = 0;
@@ -157,27 +157,33 @@ export class DedupEngine {
         }
       }
 
-      // Mark duplicate group on PRs
-      for (const pr of clusterPRs) {
-        pr.duplicateGroup = id;
+      // Determine cluster type
+      const hasPR = clusterItems.some(i => 'changedFiles' in i);
+      const hasIssue = clusterItems.some(i => !('changedFiles' in i));
+      const type: 'pr' | 'issue' | 'mixed' = hasPR && hasIssue ? 'mixed' : hasPR ? 'pr' : 'issue';
+
+      // Mark duplicate group on items
+      for (const item of clusterItems) {
+        item.duplicateGroup = id;
       }
 
       clusters.push({
         id: id++,
-        prs: clusterPRs,
-        bestPR: bestPR.number,
+        prs: clusterItems,
+        bestPR: bestItem.number,
         similarity: simCount > 0 ? simSum / simCount : 0,
-        reason: `${members.length} similar PRs (avg similarity: ${((simCount > 0 ? simSum / simCount : 0) * 100).toFixed(1)}%)`,
+        reason: `${members.length} similar items (avg similarity: ${((simCount > 0 ? simSum / simCount : 0) * 100).toFixed(1)}%)`,
+        type,
       });
     }
 
     return clusters;
   }
 
-  private prToText(pr: ScoredPR): string {
-    const parts = [pr.title, pr.body?.slice(0, 1000) ?? ''];
-    if (pr.changedFiles.length > 0) {
-      parts.push('Files: ' + pr.changedFiles.slice(0, 20).join(', '));
+  private itemToText(item: TriageItem): string {
+    const parts = [item.title, item.body?.slice(0, 1000) ?? ''];
+    if ('changedFiles' in item && item.changedFiles.length > 0) {
+      parts.push('Files: ' + item.changedFiles.slice(0, 20).join(', '));
     }
     return parts.join('\n').slice(0, 2000);
   }
