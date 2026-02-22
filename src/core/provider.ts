@@ -2,8 +2,6 @@
  * Multi-provider LLM abstraction for Treliq
  */
 
-async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
-
 /** Default models per provider */
 export const DEFAULT_PROVIDER_MODELS: Record<string, string> = {
   gemini: 'gemini-2.0-flash',
@@ -37,7 +35,6 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
-    await sleep(100);
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`;
     const res = await fetch(url, {
       method: 'POST',
@@ -56,7 +53,6 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
-    await sleep(100);
     const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent';
     const res = await fetch(url, {
       method: 'POST',
@@ -84,7 +80,6 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
-    await sleep(100);
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -104,7 +99,6 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
-    await sleep(100);
     const res = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: {
@@ -140,7 +134,6 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
-    await sleep(100);
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -182,7 +175,6 @@ export class OpenRouterProvider implements LLMProvider {
   }
 
   async generateText(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
-    await sleep(100);
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
