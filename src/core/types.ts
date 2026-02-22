@@ -74,6 +74,38 @@ export interface ScoredPR extends PRData {
   duplicateGroup?: number;     // Cluster ID if part of a duplicate group
   isSpam: boolean;
   spamReasons: string[];
+  intent?: IntentCategory;
+}
+
+export type IntentCategory = 'bugfix' | 'feature' | 'refactor' | 'dependency' | 'docs' | 'chore';
+
+export interface IssueData {
+  number: number;
+  title: string;
+  body: string;
+  author: string;
+  authorAssociation: string;
+  createdAt: string;
+  updatedAt: string;
+  labels: string[];
+  milestone?: string;
+  commentCount: number;
+  reactionCount: number;
+  state: 'open' | 'closed';
+  stateReason?: 'completed' | 'not_planned' | null;
+  isLocked: boolean;
+  assignees: string[];
+  linkedPRs: number[];
+}
+
+export interface ScoredIssue extends IssueData {
+  totalScore: number;
+  signals: SignalScore[];
+  intent?: IntentCategory;
+  embedding?: number[];
+  duplicateGroup?: number;
+  isSpam: boolean;
+  spamReasons: string[];
 }
 
 export interface DedupCluster {
