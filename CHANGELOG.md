@@ -4,6 +4,50 @@ All notable changes to Treliq will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-02-22
+
+### Added
+- **Accuracy Pipeline** — 5 new stages: Diff-Aware Scoring, Intent-Aware Profiles, LLM Dedup Verification, Issue-PR Semantic Matching, Holistic Re-ranking.
+- **Intent Classification** (Signal #21) — 3-tier detection: conventional commit prefix, LLM classification, heuristic fallback. 6 categories with intent-aware weight profiles.
+- **Full Issue Triage** — `scan-issues` command, `--include-issues` flag, 12 issue-specific signals, cross-type PR/issue dedup.
+- **Auto-Actions Engine** — `--auto-close-dupes`, `--auto-close-spam`, `--auto-merge`, `--auto-label-intent`. Dry-run by default, `--confirm` for execution.
+- **`enrichWithIssues()` method** — Correct pipeline ordering for semantic matching after issue data is available.
+
+### Fixed
+- Pino logs redirected to stderr (`destination: 2`) so JSON stdout stays clean.
+- LLM scoring rate limit: concurrency reduced 10 → 5, scoring engine wired to `onThrottle` callback.
+- Diff analysis rate limit: default concurrency reduced 15 → 3, accepts external `ConcurrencyController`.
+- Semantic matching pipeline: `enrichWithIssues()` runs matching + holistic re-ranking after issues are fetched (was running before issue data existed).
+- `llmReason` now set on LLM failure for better diagnostics.
+- CLI `--include-issues` output ordering fixed (outputResult moved after issue scanning).
+
+### Changed
+- Scoring engine exposes `throttle()` and `concurrencyMax()` public methods.
+- `DiffAnalyzer.analyzeMany()` accepts optional external `ConcurrencyController`.
+- All concurrency controllers (scoring, diff, dedup, vision) throttled together on 429.
+
+### Quality
+- **384 tests** across 28 suites (up from 244 in v0.6.0).
+
+## [0.6.0] - 2026-02-22
+
+### Added
+- **Parallel Pipeline** — Dedup + Vision run concurrently via `Promise.all`.
+- **Batch Embedding** — Gemini `batchEmbedContents` and OpenAI array input (100 embeddings/call).
+- **RetryableProvider** — Exponential backoff + jitter, HTTP 429 detection, `Retry-After` support, fast-fail on non-retryable errors.
+- **Adaptive Concurrency** — `ConcurrencyController.throttle()` halves parallelism on rate-limit, `recover()` increments back.
+- **Expanded Cache** — Embedding vectors and vision results persisted, incremental scans skip re-embedding.
+
+### Changed
+- First scan time reduced from ~140 min to ~15-20 min (3000 PRs).
+- Incremental scans reduced to ~5-8 min.
+- `DedupEngine.findDuplicates()` accepts optional `ConcurrencyController`.
+- `VisionChecker.checkMany()` accepts optional `ConcurrencyController`.
+- Cache format stores embedding vectors (old caches auto-upgraded).
+
+### Quality
+- **244 tests** across 17 suites (up from 218 in v0.5.1).
+
 ## [0.5.1] - 2026-02-19
 
 ### Added
@@ -97,6 +141,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Vision document alignment (VISION.md / ROADMAP.md check via LLM)
 - Output formats: table, JSON, markdown, GitHub comment
 
+[0.7.0]: https://github.com/mahsumaktas/treliq/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/mahsumaktas/treliq/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mahsumaktas/treliq/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mahsumaktas/treliq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mahsumaktas/treliq/compare/v0.3.0...v0.4.0
