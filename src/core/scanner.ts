@@ -156,7 +156,24 @@ export class TreliqScanner {
       },
     }) : undefined;
     this.wrappedProvider = wrappedProvider;
-    this.scoring = new ScoringEngine(wrappedProvider, config.trustContributors, 5);
+    if (config.cascade?.enabled && config.cascade.reScoreProvider) {
+      const wrappedReScore = new RetryableProvider(config.cascade.reScoreProvider, {
+        onThrottle: () => { this.scoring.throttle(); },
+      });
+      this.scoring = new ScoringEngine({
+        provider: wrappedProvider,
+        trustContributors: config.trustContributors,
+        maxConcurrent: 5,
+        cascade: {
+          enabled: true,
+          reScoreProvider: wrappedReScore,
+          preFilterThreshold: config.cascade.preFilterThreshold,
+          haikuThreshold: config.cascade.haikuThreshold,
+        },
+      });
+    } else {
+      this.scoring = new ScoringEngine(wrappedProvider, config.trustContributors, 5);
+    }
     if (config.dbPath) {
       this.db = new TreliqDB(config.dbPath);
     }

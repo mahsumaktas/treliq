@@ -51,8 +51,8 @@ describe('ScoringEngine', () => {
   describe('LLM dual scoring', () => {
     it('should produce idea + implementation scores', async () => {
       const provider = new MockLLMProvider();
-      // 7/10 idea → 70, 4/5 impl → 80
-      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good implementation');
+      // 7*8 + bonus 14 = 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good implementation', 14);
 
       const engine = new ScoringEngine(provider);
       const pr = createPRData({
@@ -74,17 +74,18 @@ describe('ScoringEngine', () => {
       // totalScore = 0.7 * idea + 0.3 * implementation
       expect(scored.totalScore).toBe(Math.round(0.7 * 70 + 0.3 * 80));
 
-      // Verify provider was called with dual checklist prompt
+      // Verify provider was called with hybrid checklist prompt
       expect(provider.generateTextCalls.length).toBe(1);
       expect(provider.generateTextCalls[0].prompt).toContain('feat: add authentication');
       expect(provider.generateTextCalls[0].prompt).toContain('PART A');
       expect(provider.generateTextCalls[0].prompt).toContain('PART B');
+      expect(provider.generateTextCalls[0].prompt).toContain('PART C');
     });
 
     it('should use weighted average formula', async () => {
       const provider = new MockLLMProvider();
-      // 8/10 idea → 80, 5/5 impl → 100
-      provider.generateTextResponse = dualChecklistResponse(8, 5, 'low', 'Test');
+      // 8*8 + bonus 16 = 80, 5/5 impl → 100
+      provider.generateTextResponse = dualChecklistResponse(8, 5, 'low', 'Test', 16);
 
       const engine = new ScoringEngine(provider);
       const pr = createPRData({
@@ -162,8 +163,8 @@ describe('ScoringEngine', () => {
 
     it('should process PRs with LLM provider', async () => {
       const provider = new MockLLMProvider();
-      // 7/10 idea → 70, 4/5 impl → 80
-      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good');
+      // 7*8 + bonus 14 = 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good', 14);
 
       const engine = new ScoringEngine(provider);
       const prs = [
@@ -174,7 +175,7 @@ describe('ScoringEngine', () => {
       const results = await engine.scoreMany(prs);
 
       expect(results).toHaveLength(2);
-      expect(results[0].llmScore).toBe(70); // 7/10 * 100
+      expect(results[0].llmScore).toBe(70); // 7*8 + 14
       expect(results[1].llmScore).toBe(70);
       expect(provider.generateTextCalls.length).toBe(2);
     });
@@ -397,8 +398,8 @@ describe('ScoringEngine', () => {
   describe('Diff-enriched scoring blend', () => {
     it('blends implementationScore with diff codeQuality when diff analysis available', async () => {
       const provider = new MockLLMProvider();
-      // 8/10 idea → 80, 4/5 impl → 80
-      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'Good PR');
+      // 8*8 + bonus 16 = 80, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'Good PR', 16);
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -540,6 +541,107 @@ describe('ScoringEngine', () => {
       // Intent signal should have weight 0 (only affects via profiles)
       const intentSignal = scored.signals.find(s => s.name === 'intent');
       expect(intentSignal?.weight).toBe(0);
+    });
+  });
+
+  describe('Cascade integration', () => {
+    it('cascade reduces LLM calls for mixed-quality batch', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+
+      // Haiku response varies per call: low score for junk, high for quality
+      let haikuCallCount = 0;
+      haiku.generateTextResponse = (prompt: string) => {
+        haikuCallCount++;
+        // Quality PRs get high scores, junk gets low
+        if (prompt.includes('Quality PR')) {
+          return dualChecklistResponse(7, 4, 'low', 'Good PR', 12); // 68 >= 40
+        }
+        return dualChecklistResponse(1, 1, 'low', 'Junk', 2); // 10 < 40
+      };
+      sonnet.generateTextResponse = dualChecklistResponse(6, 3, 'medium', 'Sonnet refined', 10);
+
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, haikuThreshold: 40 },
+      });
+
+      const prs = [
+        createPRData({ number: 1, title: 'Quality PR: auth system', ciStatus: 'success' }),
+        createPRData({
+          number: 2, title: 'fix typo', body: 'x',
+          additions: 1, deletions: 0, hasIssueRef: false, hasTests: false,
+          changedFiles: ['README.md'], authorAssociation: 'NONE',
+        }),
+        createPRData({ number: 3, title: 'Quality PR: security fix', ciStatus: 'success' }),
+      ];
+
+      const results = await engine.scoreMany(prs);
+      expect(results.length).toBe(3);
+
+      // PR #2 is spam → pre-filtered, no LLM calls
+      const spamPR = results.find(r => r.number === 2);
+      expect(spamPR?.scoredBy).toBe('heuristic');
+
+      // Quality PRs → Haiku + Sonnet
+      const qualityPRs = results.filter(r => r.number !== 2);
+      for (const pr of qualityPRs) {
+        expect(pr.scoredBy).toBe('sonnet');
+      }
+
+      // Sonnet only called for quality PRs (2 calls), not for spam
+      expect(sonnet.generateTextCalls.length).toBe(2);
+    });
+
+    it('Sonnet prompt identical to Haiku prompt', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      // Haiku above threshold → triggers Sonnet
+      haiku.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Above threshold', 12);
+      sonnet.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'Sonnet', 10);
+
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, haikuThreshold: 40 },
+      });
+
+      const pr = createPRData({ title: 'feat: new auth module' });
+      await engine.score(pr);
+
+      expect(haiku.generateTextCalls.length).toBe(1);
+      expect(sonnet.generateTextCalls.length).toBe(1);
+      // Both should receive the exact same prompt
+      expect(sonnet.generateTextCalls[0].prompt).toBe(haiku.generateTextCalls[0].prompt);
+    });
+
+    it('cascade with options-based constructor preserves all settings', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      haiku.generateTextResponse = dualChecklistResponse(3, 2, 'low', 'Below threshold', 4);
+
+      const engine = new ScoringEngine({
+        provider: haiku,
+        trustContributors: true,
+        maxConcurrent: 3,
+        cascade: {
+          enabled: true,
+          reScoreProvider: sonnet,
+          preFilterThreshold: 10,
+          haikuThreshold: 50,
+        },
+      });
+
+      const pr = createPRData({ authorAssociation: 'CONTRIBUTOR' });
+      const scored = await engine.score(pr);
+
+      // haiku ideaScore = 3*8+4 = 28 < 50 threshold → stays as haiku
+      expect(scored.scoredBy).toBe('haiku');
+      expect(scored.ideaScore).toBe(28);
+      expect(sonnet.generateTextCalls.length).toBe(0);
+
+      // Verify trustContributors works
+      const spamSignal = scored.signals.find(s => s.name === 'spam');
+      expect(spamSignal?.reason).toContain('Trusted contributor');
     });
   });
 });

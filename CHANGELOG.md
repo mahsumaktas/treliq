@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 
 ## [0.8.0] - 2026-02-24
 
+### Added
+- **Cascade pipeline**: Heuristic pre-filter → Haiku → Sonnet re-score
+  - `readinessScore < 15 || isSpam` → skip LLM ($0)
+  - Haiku ideaScore < 40 → final (no Sonnet call)
+  - Haiku ideaScore >= 40 → Sonnet re-score for precision
+  - Estimated cost: ~$13 for 4051 PRs (vs $27 Sonnet-only)
+- `scoredBy` field: 'heuristic' | 'haiku' | 'sonnet'
+- `readyToSteal` flag: ideaScore >= 70 && implScore >= 80 && state=closed/merged
+- `noveltyBonus` field on ScoredPR
+- `CascadeConfig` and `ScoringEngineOptions` types
+- `PRData.state` field (open/closed/merged)
+- `ScoringEngine` constructor accepts options object (backward compat preserved)
+- `scoreLLM/scoreLLMSingle` accept optional provider parameter for re-scoring
+
 ### Changed
 - **Triple scoring: idea + implementation + readiness** — `ideaScore` (fikir/problem degeri, 10 LLM soru), `implementationScore` (kod kalitesi, 5 LLM soru), `readinessScore` (merge hazirlik, TOPSIS heuristic)
 - **CheckEval binary checklist** split into PART A (10 idea questions) and PART B (5 implementation questions). Evidence: CheckEval EMNLP 2025, "Rubric Is All You Need" ACM ICER 2025.

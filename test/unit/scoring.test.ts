@@ -603,8 +603,8 @@ describe('ScoringEngine', () => {
   describe('tier classification', () => {
     it('assigns critical when ideaScore>=80', async () => {
       const provider = new MockLLMProvider();
-      // 8/10 idea → ideaScore=80, 5/5 impl → implScore=100
-      provider.generateTextResponse = dualChecklistResponse(8, 5, 'low', 'Critical fix');
+      // 8/10 idea * 8 + bonus 16 = 80, 5/5 impl → implScore=100
+      provider.generateTextResponse = dualChecklistResponse(8, 5, 'low', 'Critical fix', 16);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -614,8 +614,8 @@ describe('ScoringEngine', () => {
 
     it('assigns high when ideaScore>=60', async () => {
       const provider = new MockLLMProvider();
-      // 7/10 idea → ideaScore=70
-      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good idea');
+      // 7/10 idea * 8 + bonus 14 = 70
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good idea', 14);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -623,9 +623,10 @@ describe('ScoringEngine', () => {
       expect(scored.tier).toBe('high');
     });
 
-    it('assigns high for exactly 6/10 (ideaScore=60)', async () => {
+    it('assigns high for exactly ideaScore=60', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'Decent fix');
+      // 6/10 idea * 8 + bonus 12 = 60
+      provider.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'Decent fix', 12);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -635,8 +636,8 @@ describe('ScoringEngine', () => {
 
     it('assigns normal when ideaScore 30-59', async () => {
       const provider = new MockLLMProvider();
-      // 5/10 idea → ideaScore=50
-      provider.generateTextResponse = dualChecklistResponse(5, 3, 'low', 'Routine fix');
+      // 5/10 idea * 8 + bonus 10 = 50
+      provider.generateTextResponse = dualChecklistResponse(5, 3, 'low', 'Routine fix', 10);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -646,8 +647,8 @@ describe('ScoringEngine', () => {
 
     it('assigns low when ideaScore<30', async () => {
       const provider = new MockLLMProvider();
-      // 2/10 idea → ideaScore=20
-      provider.generateTextResponse = dualChecklistResponse(2, 1, 'low', 'Trivial');
+      // 2/10 idea * 8 + bonus 4 = 20
+      provider.generateTextResponse = dualChecklistResponse(2, 1, 'low', 'Trivial', 4);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -667,8 +668,8 @@ describe('ScoringEngine', () => {
   describe('dual scoring — idea + implementation', () => {
     it('returns separate ideaScore and implementationScore', async () => {
       const provider = new MockLLMProvider();
-      // 7/10 idea → 70, 4/5 impl → 80
-      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test');
+      // 7/10 idea * 8 + bonus 14 = 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test', 14);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -687,8 +688,8 @@ describe('ScoringEngine', () => {
 
     it('computes totalScore as 0.7*idea + 0.3*implementation', async () => {
       const provider = new MockLLMProvider();
-      // 7/10 idea → 70, 4/5 impl → 80
-      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test');
+      // 7/10 idea * 8 + bonus 14 = 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test', 14);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -699,8 +700,8 @@ describe('ScoringEngine', () => {
 
     it('high idea + low implementation = idea-driven total', async () => {
       const provider = new MockLLMProvider();
-      // 8/10 idea → 80, 1/5 impl → 20
-      provider.generateTextResponse = dualChecklistResponse(8, 1, 'medium', 'Great idea, bad code');
+      // 8/10 idea * 8 + bonus 16 = 80, 1/5 impl → 20
+      provider.generateTextResponse = dualChecklistResponse(8, 1, 'medium', 'Great idea, bad code', 16);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -713,14 +714,47 @@ describe('ScoringEngine', () => {
 
     it('low idea + high implementation = still low total', async () => {
       const provider = new MockLLMProvider();
-      // 1/10 idea → 10, 5/5 impl → 100
-      provider.generateTextResponse = dualChecklistResponse(1, 5, 'low', 'Trivial but polished');
+      // 1/10 idea * 8 + bonus 2 = 10, 5/5 impl → 100
+      provider.generateTextResponse = dualChecklistResponse(1, 5, 'low', 'Trivial but polished', 2);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
 
       // totalScore = round(0.7 * 10 + 0.3 * 100) = round(7 + 30) = 37
       expect(scored.totalScore).toBe(37);
+    });
+
+    it('noveltyBonus provides fine-grained differentiation', async () => {
+      const provider = new MockLLMProvider();
+      // Same binary (6/10) but different bonus: 6*8+5=53 vs 6*8+15=63
+      provider.generateTextResponse = dualChecklistResponse(6, 4, 'low', 'Low bonus', 5);
+      const engine = new ScoringEngine(provider);
+      const pr1 = createPRData({ number: 1 });
+      const scored1 = await engine.score(pr1);
+
+      provider.generateTextResponse = dualChecklistResponse(6, 4, 'low', 'High bonus', 15);
+      const pr2 = createPRData({ number: 2 });
+      const scored2 = await engine.score(pr2);
+
+      expect(scored1.ideaScore).toBe(53);
+      expect(scored2.ideaScore).toBe(63);
+      expect(scored2.ideaScore! - scored1.ideaScore!).toBe(10);
+    });
+
+    it('noveltyBonus clamped to 0-20 range', async () => {
+      const provider = new MockLLMProvider();
+      // Bonus > 20 should be clamped
+      provider.generateTextResponse = JSON.stringify({
+        idea: [true,true,true,true,true,true,true,true,true,true],
+        implementation: [true,true,true,true,true],
+        noveltyBonus: 30, risk: 'low', reason: 'Over bonus',
+      });
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+
+      // 10*8 + 20(clamped) = 100
+      expect(scored.ideaScore).toBe(100);
     });
 
     it('uses readinessScore as totalScore when no provider', async () => {
@@ -764,7 +798,8 @@ describe('ScoringEngine', () => {
   describe('issue context enrichment', () => {
     it('includes issueContext in LLM prompt when available', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'With context');
+      // 7*8 + 14 = 70
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'With context', 14);
       const engine = new ScoringEngine(provider);
       const pr = createPRData({
         issueContext: 'Bug: login crashes when password contains special chars',
@@ -777,7 +812,8 @@ describe('ScoringEngine', () => {
 
     it('works without issueContext', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'No context');
+      // 6*8 + 12 = 60
+      provider.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'No context', 12);
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -801,16 +837,17 @@ describe('ScoringEngine', () => {
       let callCount = 0;
       provider.generateTextResponse = () => {
         callCount++;
-        // Return different idea scores: 5/10=50, 8/10=80, 7/10=70
+        // Return different idea scores with same bonus=10:
+        // 5*8+10=50, 8*8+10=74, 7*8+10=66
         const ideaYes = [5, 8, 7][callCount - 1] ?? 7;
-        return dualChecklistResponse(ideaYes, 4, 'low', `Pass ${callCount}`);
+        return dualChecklistResponse(ideaYes, 4, 'low', `Pass ${callCount}`, 10);
       };
       const engine = new ScoringEngine(provider, false, 5, 3);
       const pr = createPRData();
       const scored = await engine.score(pr);
       expect(provider.generateTextCalls.length).toBe(3);
-      // Sorted by ideaScore: [50, 70, 80] → median = 70 (7/10)
-      expect(scored.ideaScore).toBe(70);
+      // Sorted by ideaScore: [50, 66, 74] → median = 66 (7*8+10)
+      expect(scored.ideaScore).toBe(66);
     });
 
     it('enforces minimum 1 pass', async () => {
@@ -850,6 +887,211 @@ describe('ScoringEngine', () => {
 
       expect(scored.isSpam).toBe(false);
       expect(scored.spamReasons).toEqual([]);
+    });
+  });
+
+  describe('cascade pipeline', () => {
+    it('skips LLM when readinessScore < preFilterThreshold', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, preFilterThreshold: 99 },
+      });
+      // Very low quality PR that gets pre-filtered
+      const pr = createPRData({
+        ciStatus: 'failure',
+        mergeable: 'conflicting',
+        isDraft: true,
+        additions: 1,
+        deletions: 0,
+        body: 'x',
+        hasIssueRef: false,
+        hasTests: false,
+        authorAssociation: 'NONE',
+      });
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBe('heuristic');
+      expect(haiku.generateTextCalls.length).toBe(0);
+      expect(sonnet.generateTextCalls.length).toBe(0);
+      expect(scored.ideaScore).toBeUndefined();
+    });
+
+    it('skips LLM for spam PRs', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet },
+      });
+      // Spam PR: tiny docs, no issue, short body, NONE author
+      const pr = createPRData({
+        additions: 1,
+        deletions: 0,
+        hasIssueRef: false,
+        body: 'fix',
+        hasTests: false,
+        changedFiles: ['README.md'],
+        authorAssociation: 'NONE',
+      });
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBe('heuristic');
+      expect(haiku.generateTextCalls.length).toBe(0);
+    });
+
+    it('uses only Haiku when ideaScore < haikuThreshold', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      // 2/10 * 8 + bonus 5 = 21 (< 40 threshold)
+      haiku.generateTextResponse = dualChecklistResponse(2, 2, 'low', 'Low value', 5);
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, haikuThreshold: 40 },
+      });
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBe('haiku');
+      expect(scored.ideaScore).toBe(21);
+      expect(haiku.generateTextCalls.length).toBe(1);
+      expect(sonnet.generateTextCalls.length).toBe(0);
+    });
+
+    it('re-scores with Sonnet when ideaScore >= haikuThreshold', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      // Haiku: 7*8 + 12 = 68 (>= 40 threshold)
+      haiku.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Haiku says good', 12);
+      // Sonnet: 6*8 + 10 = 58 (Sonnet is stricter)
+      sonnet.generateTextResponse = dualChecklistResponse(6, 3, 'medium', 'Sonnet says okay', 10);
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, haikuThreshold: 40 },
+      });
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBe('sonnet');
+      expect(scored.ideaScore).toBe(58); // Sonnet's score
+      expect(scored.llmReason).toBe('Sonnet says okay');
+      expect(haiku.generateTextCalls.length).toBe(1);
+      expect(sonnet.generateTextCalls.length).toBe(1);
+    });
+
+    it('Sonnet fail falls back to Haiku score', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      // Haiku: 8*8 + 14 = 78
+      haiku.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'Haiku scored', 14);
+      // Sonnet throws
+      sonnet.generateTextResponse = () => { throw new Error('Rate limit'); };
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, haikuThreshold: 40 },
+      });
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBe('haiku');
+      expect(scored.ideaScore).toBe(78); // Haiku's score preserved
+      expect(scored.llmReason).toBe('Haiku scored');
+    });
+
+    it('Haiku fail falls back to heuristic', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      haiku.generateTextResponse = () => { throw new Error('Service down'); };
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet },
+      });
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBe('heuristic');
+      expect(scored.ideaScore).toBeUndefined();
+      expect(scored.ideaReason).toContain('LLM failed');
+    });
+
+    it('legacy constructor works (cascade disabled by default)', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Legacy', 12);
+      const engine = new ScoringEngine(provider, false, 5);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBeUndefined(); // legacy path doesn't set scoredBy
+      expect(scored.ideaScore).toBe(68); // 7*8 + 12
+    });
+
+    it('cascade disabled uses single provider path', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      haiku.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Single path', 12);
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: false, reScoreProvider: sonnet },
+      });
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      // cascade disabled → legacy path
+      expect(scored.scoredBy).toBeUndefined();
+      expect(scored.ideaScore).toBe(68);
+      expect(haiku.generateTextCalls.length).toBe(1);
+      expect(sonnet.generateTextCalls.length).toBe(0);
+    });
+  });
+
+  describe('readyToSteal flag', () => {
+    it('true when ideaScore>=70 && implScore>=80 && state=closed', async () => {
+      const provider = new MockLLMProvider();
+      // 8*8 + 14 = 78 idea, 4/5 = 80 impl
+      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'Great PR', 14);
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData({ state: 'closed' });
+      const scored = await engine.score(pr);
+      expect(scored.readyToSteal).toBe(true);
+    });
+
+    it('false for open PRs even with high scores', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'Great PR', 14);
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData({ state: 'open' });
+      const scored = await engine.score(pr);
+      expect(scored.readyToSteal).toBe(false);
+    });
+
+    it('false when ideaScore < 70', async () => {
+      const provider = new MockLLMProvider();
+      // 5*8 + 8 = 48 idea
+      provider.generateTextResponse = dualChecklistResponse(5, 5, 'low', 'Mid PR', 8);
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData({ state: 'closed' });
+      const scored = await engine.score(pr);
+      expect(scored.readyToSteal).toBe(false);
+    });
+
+    it('false when no LLM provider (heuristic only)', async () => {
+      const engine = new ScoringEngine();
+      const pr = createPRData({ state: 'closed' });
+      const scored = await engine.score(pr);
+      expect(scored.readyToSteal).toBe(false);
+    });
+  });
+
+  describe('scoredBy field', () => {
+    it('non-cascade: scoredBy undefined (legacy compat)', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test', 12);
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.scoredBy).toBeUndefined();
+    });
+
+    it('noveltyBonus field exposed in ScoredPR output', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test', 15);
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.noveltyBonus).toBe(15);
     });
   });
 });

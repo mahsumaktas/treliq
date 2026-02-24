@@ -39,6 +39,7 @@ export function createPRData(overrides: Partial<PRData> = {}): PRData {
     milestone: undefined,
     requestedReviewers: ['reviewer1'],
     codeowners: ['testuser'],
+    state: 'open',
   };
 
   return { ...defaults, ...overrides };
@@ -95,6 +96,9 @@ export function createScoredPR(overrides: Partial<ScoredPR> = {}): ScoredPR {
     penaltyMultiplier: undefined,
     percentileRank: undefined,
     tier: undefined,
+    scoredBy: undefined,
+    readyToSteal: false,
+    noveltyBonus: undefined,
   };
 
   const signals = overrides.signals ?? defaultSignals;

@@ -2,7 +2,7 @@
  * ScoringEngine — Multi-signal PR scoring with LLM-assisted analysis
  */
 
-import type { PRData, ScoredPR, SignalScore, DiffAnalysis } from './types';
+import type { PRData, ScoredPR, SignalScore, DiffAnalysis, ScoringEngineOptions } from './types';
 import type { LLMProvider } from './provider';
 import { IntentClassifier, type IntentResult } from './intent';
 import { ConcurrencyController } from './concurrency';
@@ -52,6 +52,7 @@ const log = createLogger('scoring');
 interface LLMScoringResult {
   ideaScore: number;
   implementationScore: number;
+  noveltyBonus: number;
   risk: 'low' | 'medium' | 'high';
   reason: string;
   ideaChecklist: boolean[];
@@ -67,13 +68,38 @@ export class ScoringEngine {
   private intentClassifier: IntentClassifier;
   private diffAnalyses = new Map<number, DiffAnalysis>();
   private scoringPasses: number;
+  private reScoreProvider?: LLMProvider;
+  private cascadeEnabled: boolean = false;
+  private preFilterThreshold: number = 15;
+  private haikuThreshold: number = 40;
 
-  constructor(provider?: LLMProvider, trustContributors = false, maxConcurrent = 5, scoringPasses = 1) {
-    this.provider = provider;
-    this.trustContributors = trustContributors;
-    this.concurrency = new ConcurrencyController(maxConcurrent);
-    this.intentClassifier = new IntentClassifier(provider);
-    this.scoringPasses = Math.max(1, scoringPasses);
+  constructor(provider?: LLMProvider, trustContributors?: boolean, maxConcurrent?: number, scoringPasses?: number);
+  constructor(options: ScoringEngineOptions);
+  constructor(
+    providerOrOptions?: LLMProvider | ScoringEngineOptions,
+    trustContributors = false,
+    maxConcurrent = 5,
+    scoringPasses = 1,
+  ) {
+    // Detection: LLMProvider has generateText, ScoringEngineOptions doesn't
+    if (providerOrOptions && typeof providerOrOptions === 'object' && !('generateText' in providerOrOptions)) {
+      const opts = providerOrOptions as ScoringEngineOptions;
+      this.provider = opts.provider;
+      this.trustContributors = opts.trustContributors ?? false;
+      this.concurrency = new ConcurrencyController(opts.maxConcurrent ?? 5);
+      this.scoringPasses = Math.max(1, opts.scoringPasses ?? 1);
+      this.cascadeEnabled = opts.cascade?.enabled ?? false;
+      this.reScoreProvider = opts.cascade?.reScoreProvider;
+      this.preFilterThreshold = opts.cascade?.preFilterThreshold ?? 15;
+      this.haikuThreshold = opts.cascade?.haikuThreshold ?? 40;
+    } else {
+      // Legacy positional — all existing tests use this path
+      this.provider = providerOrOptions as LLMProvider | undefined;
+      this.trustContributors = trustContributors;
+      this.concurrency = new ConcurrencyController(maxConcurrent);
+      this.scoringPasses = Math.max(1, scoringPasses);
+    }
+    this.intentClassifier = new IntentClassifier(this.provider);
   }
 
   /** Halve concurrency on rate-limit (429) */
@@ -190,15 +216,58 @@ export class ScoringEngine {
     if (isAbandoned) penaltyMultiplier *= 0.3;
     const readinessScore = Math.round(Math.max(0, Math.min(100, topsisScore * penaltyMultiplier)));
 
-    // 7. LLM dual scoring (CheckEval: idea + implementation)
+    // 7. LLM dual scoring (CheckEval: idea + implementation) — with cascade support
     let ideaScore: number | undefined;
     let ideaReason: string | undefined;
     let ideaChecklist: boolean[] | undefined;
     let implementationScore: number | undefined;
     let implementationChecklist: boolean[] | undefined;
     let llmRisk: 'low' | 'medium' | 'high' | undefined;
+    let scoredBy: 'heuristic' | 'haiku' | 'sonnet' | undefined;
+    let noveltyBonusVal: number | undefined;
 
-    if (this.provider) {
+    if (this.cascadeEnabled && this.provider) {
+      // CASCADE PIPELINE
+      if (readinessScore < this.preFilterThreshold || isSpam) {
+        // Stage 1: Pre-filter — skip LLM entirely
+        scoredBy = 'heuristic';
+      } else {
+        // Stage 2: Haiku pass
+        try {
+          const haikuResult = await this.scoreLLM(pr);
+          ideaScore = haikuResult.ideaScore;
+          implementationScore = haikuResult.implementationScore;
+          ideaReason = haikuResult.reason;
+          llmRisk = haikuResult.risk;
+          ideaChecklist = haikuResult.ideaChecklist;
+          implementationChecklist = haikuResult.implementationChecklist;
+          noveltyBonusVal = haikuResult.noveltyBonus;
+          scoredBy = 'haiku';
+
+          // Stage 3: Sonnet re-score if above threshold
+          if (ideaScore >= this.haikuThreshold && this.reScoreProvider) {
+            try {
+              const sonnetResult = await this.scoreLLM(pr, this.reScoreProvider);
+              ideaScore = sonnetResult.ideaScore;
+              implementationScore = sonnetResult.implementationScore;
+              ideaReason = sonnetResult.reason;
+              llmRisk = sonnetResult.risk;
+              ideaChecklist = sonnetResult.ideaChecklist;
+              implementationChecklist = sonnetResult.implementationChecklist;
+              noveltyBonusVal = sonnetResult.noveltyBonus;
+              scoredBy = 'sonnet';
+            } catch (err: any) {
+              log.warn({ pr: pr.number, err }, 'Sonnet re-score failed, keeping Haiku');
+            }
+          }
+        } catch (err: any) {
+          ideaReason = `LLM failed: ${err.message}`;
+          scoredBy = 'heuristic';
+          log.warn({ pr: pr.number, err }, 'Haiku scoring failed');
+        }
+      }
+    } else if (this.provider) {
+      // Legacy non-cascade path
       try {
         const llmResult = await this.scoreLLM(pr);
         ideaScore = llmResult.ideaScore;
@@ -207,6 +276,7 @@ export class ScoringEngine {
         llmRisk = llmResult.risk;
         ideaChecklist = llmResult.ideaChecklist;
         implementationChecklist = llmResult.implementationChecklist;
+        noveltyBonusVal = llmResult.noveltyBonus;
       } catch (err: any) {
         ideaReason = `LLM failed: ${err.message}`;
         log.warn({ pr: pr.number, err }, 'LLM scoring failed');
@@ -235,6 +305,11 @@ export class ScoringEngine {
     // 10. Tier classification (based on ideaScore)
     const tier = this.assignTier(ideaScore ?? readinessScore, readinessScore);
 
+    // 11. readyToSteal: high-value closed/merged PR we can re-implement
+    const readyToSteal = (ideaScore !== undefined && ideaScore >= 70)
+      && (implementationScore !== undefined && implementationScore >= 80)
+      && (pr.state === 'closed' || pr.state === 'merged');
+
     return {
       ...pr,
       totalScore,
@@ -258,6 +333,10 @@ export class ScoringEngine {
       readinessScore,
       penaltyMultiplier,
       tier,
+      // v0.8 cascade
+      scoredBy,
+      readyToSteal: readyToSteal ?? false,
+      noveltyBonus: noveltyBonusVal,
     };
   }
 
@@ -292,28 +371,29 @@ export class ScoringEngine {
   }
 
   /**
-   * CheckEval — Binary Checklist Decomposition (EMNLP 2025)
+   * Hybrid CheckEval — Binary Checklist + Novelty Bonus (EMNLP 2025 + fine-grained)
    * Split into two checklists: 10 idea questions + 5 implementation questions.
-   * ideaScore = (idea_yes / 10) * 100
+   * ideaScore = (idea_yes * 8) + noveltyBonus(0-20)
+   *   → base 0-80 from binary + 0-20 continuous bonus = fine-grained 0-100
    * implementationScore = (impl_yes / 5) * 100
    *
    * Multi-pass self-consistency (Wang et al. 2023): when scoringPasses > 1,
-   * runs N times with varied temperature and takes median by yesCount.
+   * runs N times with varied temperature and takes median by ideaScore.
    */
-  private async scoreLLM(pr: PRData): Promise<LLMScoringResult> {
+  private async scoreLLM(pr: PRData, provider: LLMProvider = this.provider!): Promise<LLMScoringResult> {
     if (this.scoringPasses <= 1) {
-      return this.scoreLLMSingle(pr, 0.1);
+      return this.scoreLLMSingle(pr, 0.1, provider);
     }
 
     // Multi-pass: run N times with slightly higher temperature, take median
     const results = await Promise.all(
-      Array.from({ length: this.scoringPasses }, () => this.scoreLLMSingle(pr, 0.4))
+      Array.from({ length: this.scoringPasses }, () => this.scoreLLMSingle(pr, 0.4, provider))
     );
     results.sort((a, b) => a.ideaScore - b.ideaScore);
     return results[Math.floor(results.length / 2)];
   }
 
-  private async scoreLLMSingle(pr: PRData, temperature: number): Promise<LLMScoringResult> {
+  private async scoreLLMSingle(pr: PRData, temperature: number, provider: LLMProvider = this.provider!): Promise<LLMScoringResult> {
     const filesStr = pr.changedFiles.slice(0, 30).join(', ');
     const input = `Title: ${pr.title}\nBody: ${(pr.body ?? '').slice(0, 2000)}\nFiles: ${filesStr}`.slice(0, 4000);
     const issueCtx = pr.issueContext ? `\nLinked issue:\n${pr.issueContext.slice(0, 1000)}\n` : '';
@@ -353,25 +433,34 @@ M3. Are there meaningful tests that verify the fix works?
 M4. Is the code clean, handling edge cases, without introducing new issues?
 M5. Could this be merged as-is without requiring significant rework?
 
-Calibration anchors (idea / implementation):
-- Security fix timingSafeEqual (3 lines, integrated): idea=[t,t,f,f,f,t,t,t,t,t]=7/10, impl=[t,t,t,t,t]=5/5
-- Null crash fix in UI filter (8 lines, integrated): idea=[t,f,t,f,f,t,f,t,f,t]=5/10, impl=[t,t,t,t,t]=5/5
-- 3 standalone safety utilities NOT wired in (transcript purge, tool budget, token reuse): idea=[t,t,f,f,t,t,t,t,t,t]=8/10, impl=[f,f,t,t,f]=2/5
-- Typo fix in README: idea=[f,f,f,f,f,f,f,f,f,f]=0/10, impl=[t,t,f,t,t]=4/5
-- Spam/empty PR: idea=[f,f,f,f,f,f,f,f,f,f]=0/10, impl=[f,f,f,f,f]=0/5
-- Config defaults affecting all users: idea=[t,f,f,t,t,t,f,t,f,t]=6/10, impl=[t,t,f,t,t]=4/5
-- Community plugin docs (ecosystem page): idea=[f,f,f,f,t,f,f,f,f,f]=1/10, impl=[t,t,f,t,t]=4/5
-- Self-promotional docs (author's own unrelated package): idea=[f,f,f,f,f,f,f,f,f,f]=0/10, impl=[f,f,f,f,f]=0/5
-- Proactive security hardening (TLS, auth, defense-in-depth): idea=[t,t,f,f,f,t,t,t,t,t]=7/10, impl=[t,t,t,t,t]=5/5
-- Critical prototype pollution fix: idea=[t,t,f,f,f,t,t,t,t,t]=7/10, impl=[t,t,t,t,t]=5/5
-- Crash prevention (catching unhandled I/O failures): idea=[t,f,t,f,f,t,t,t,f,t]=6/10, impl=[t,t,t,t,t]=5/5
-- Small UX fix (Slack reaction emoji, real bug): idea=[t,f,f,f,f,f,f,t,f,t]=3/10, impl=[t,t,f,t,t]=4/5
+PART C — NOVELTY & SEVERITY BONUS (0-20):
+Rate the novelty and severity of the problem this PR identifies. This is a fine-grained continuous score to differentiate PRs with similar binary checklist results.
 
-Return JSON: {"idea": [true/false x10], "implementation": [true/false x5], "risk": "low"|"medium"|"high", "reason": "<1 sentence: what problem does this identify?>"}
+0-3:   Routine/trivial (typo, lint, cosmetic)
+4-7:   Standard bug or minor improvement
+8-11:  Valuable problem identification, real user impact
+12-15: Important insight — security, data integrity, or architectural gap
+16-20: Critical/novel discovery — root cause of multiple issues, paradigm shift, or silent production risk
+
+Calibration anchors (idea / implementation / bonus):
+- Security fix timingSafeEqual (3 lines): idea=7/10, impl=5/5, bonus=14
+- Null crash fix in UI filter (8 lines): idea=5/10, impl=5/5, bonus=8
+- Standalone safety utilities NOT wired in (transcript purge, tool budget): idea=8/10, impl=2/5, bonus=12
+- Typo fix in README: idea=0/10, impl=4/5, bonus=0
+- Spam/empty PR: idea=0/10, impl=0/5, bonus=0
+- Config defaults affecting all users: idea=6/10, impl=4/5, bonus=10
+- Community plugin docs (ecosystem page): idea=1/10, impl=4/5, bonus=2
+- Proactive security hardening (TLS, auth, defense-in-depth): idea=7/10, impl=5/5, bonus=15
+- Critical prototype pollution fix: idea=7/10, impl=5/5, bonus=16
+- Crash prevention (catching unhandled I/O failures): idea=6/10, impl=5/5, bonus=13
+- Small UX fix (Slack reaction emoji, real bug): idea=3/10, impl=4/5, bonus=4
+- Root cause fix affecting 10+ upstream issues: idea=8/10, impl=5/5, bonus=19
+
+Return JSON: {"idea": [true/false x10], "implementation": [true/false x5], "noveltyBonus": <0-20 integer>, "risk": "low"|"medium"|"high", "reason": "<1 sentence: what problem does this identify?>"}
 ${issueCtx}
 ${input}`;
 
-    const text = await this.provider!.generateText(prompt, { temperature, maxTokens: 400 });
+    const text = await provider.generateText(prompt, { temperature, maxTokens: 400 });
 
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('No JSON found in LLM response');
@@ -390,15 +479,24 @@ ${input}`;
         : [];
       while (implAnswers.length < 5) implAnswers.push(false);
 
+      // Parse novelty bonus (0-20, clamped)
+      const rawBonus = typeof parsed.noveltyBonus === 'number' ? parsed.noveltyBonus : 0;
+      const noveltyBonus = Math.max(0, Math.min(20, Math.round(rawBonus)));
+
       // Backward compat: combined checklist
       const combinedChecklist = [...ideaAnswers, ...implAnswers];
 
       const ideaYes = ideaAnswers.filter(a => a).length;
       const implYes = implAnswers.filter(a => a).length;
 
+      // Hybrid formula: binary base (0-80) + novelty bonus (0-20) = 0-100
+      const ideaScore = Math.min(100, ideaYes * 8 + noveltyBonus);
+      const implementationScore = Math.round((implYes / 5) * 100);
+
       return {
-        ideaScore: Math.round((ideaYes / 10) * 100),
-        implementationScore: Math.round((implYes / 5) * 100),
+        ideaScore,
+        implementationScore,
+        noveltyBonus,
         risk: ['low', 'medium', 'high'].includes(parsed.risk) ? parsed.risk : 'medium',
         reason: String(parsed.reason ?? ''),
         ideaChecklist: ideaAnswers,
