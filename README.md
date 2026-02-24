@@ -12,7 +12,7 @@
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/tests-384_passing-2DA44E?style=flat-square" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-383_passing-2DA44E?style=flat-square" alt="Tests" />
   <img src="https://img.shields.io/badge/signals-21-8B5CF6?style=flat-square" alt="21 Signals" />
   <img src="https://img.shields.io/badge/providers-4-FF6600?style=flat-square" alt="4 Providers" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
@@ -51,6 +51,65 @@ npx treliq scan -r owner/repo --no-llm
 # Also scan issues alongside PRs
 npx treliq scan -r owner/repo --no-llm --include-issues
 ```
+
+## What's New in v0.8.0
+
+### Cascade Pipeline: Cost-Optimized LLM Scoring
+Three-stage pipeline that maintains Sonnet accuracy on high-value PRs while cutting total LLM cost by ~50%:
+
+```
+PR → Heuristic (21 signals + TOPSIS readiness)
+  → readinessScore < 15 || spam?  → scoredBy='heuristic', skip LLM ($0)
+  → Haiku CheckEval               → ideaScore < 40? → scoredBy='haiku', final
+  → Sonnet re-score               → scoredBy='sonnet', final (Haiku fallback on failure)
+```
+
+**Estimated cost: ~$13 for 4051 PRs** (vs $27 Sonnet-only, vs $7 Haiku-only with +7.5 bias)
+
+```bash
+# Enable cascade mode in bulk scoring
+TRELIQ_CASCADE=1 npx tsx bulk-score-openclaw.ts
+
+# Or use the ScoringEngine API directly
+const engine = new ScoringEngine({
+  provider: haikuProvider,
+  cascade: {
+    enabled: true,
+    reScoreProvider: sonnetProvider,
+    preFilterThreshold: 15,  // skip LLM below this readiness
+    haikuThreshold: 40,      // re-score with Sonnet above this ideaScore
+  },
+});
+```
+
+### Dual Scoring: Idea + Implementation + Readiness
+Three independent dimensions replace the single LLM score:
+
+| Dimension | Source | Formula |
+|-----------|--------|---------|
+| **ideaScore** (0-100) | LLM CheckEval: 10 binary questions + noveltyBonus (0-20) | `ideaYes * 8 + noveltyBonus` |
+| **implementationScore** (0-100) | LLM CheckEval: 5 binary questions | `implYes / 5 * 100` |
+| **readinessScore** (0-100) | TOPSIS heuristic (21 signals) with hard penalties | CI fail 0.4x, conflict 0.5x, spam 0.2x |
+
+**Combined**: `totalScore = 0.7 * ideaScore + 0.3 * implementationScore`
+**Tier**: critical (idea>=80), high (>=60), normal (>=30), low (<30)
+
+### New Fields on ScoredPR
+| Field | Type | Description |
+|-------|------|-------------|
+| `scoredBy` | `'heuristic' \| 'haiku' \| 'sonnet'` | Which model produced the final score |
+| `readyToSteal` | `boolean` | High-value closed PR we can re-implement (idea>=70, impl>=80, closed/merged) |
+| `noveltyBonus` | `number` | 0-20 fine-grained bonus from CheckEval Part C |
+| `ideaScore` | `number` | Idea/problem value (0-100) |
+| `implementationScore` | `number` | Code quality (0-100) |
+| `readinessScore` | `number` | Merge readiness (0-100, TOPSIS) |
+| `tier` | `string` | Priority tier (critical/high/normal/low) |
+
+### Test Suite (383 tests, 28 suites)
+- 17 new tests: cascade pipeline (8), readyToSteal (4), scoredBy (2), cascade integration (3)
+- 125/125 scoring-specific tests passing
+
+---
 
 ## What's New in v0.7.0
 
@@ -533,7 +592,7 @@ jobs:
 | 20 | PR Complexity | 0.05 | Size analysis, AI detection, overengineering |
 | 21 | **Intent** | 0.15 | bugfix/feature/refactor/dependency/docs/chore classification |
 
-When an LLM provider is configured, scores are blended: **40% heuristic + 30% LLM text + 30% LLM diff** (with diff analysis) or **40% heuristic + 60% LLM** (without diff). Intent-aware profiles automatically adjust signal weights based on PR category (e.g., bugfix PRs boost CI/test weights).
+When an LLM provider is configured, scoring uses **dual CheckEval**: `totalScore = 0.7 × ideaScore + 0.3 × implementationScore`. The `readinessScore` (TOPSIS heuristic) serves as fallback when no LLM is available and drives cascade pre-filtering. Intent-aware profiles automatically adjust signal weights based on PR category (e.g., bugfix PRs boost CI/test weights).
 
 ### 12-Signal Issue Scoring
 
