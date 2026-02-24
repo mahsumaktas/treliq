@@ -55,12 +55,14 @@ export class ScoringEngine {
   private concurrency: ConcurrencyController;
   private intentClassifier: IntentClassifier;
   private diffAnalyses = new Map<number, DiffAnalysis>();
+  private scoringPasses: number;
 
-  constructor(provider?: LLMProvider, trustContributors = false, maxConcurrent = 5) {
+  constructor(provider?: LLMProvider, trustContributors = false, maxConcurrent = 5, scoringPasses = 1) {
     this.provider = provider;
     this.trustContributors = trustContributors;
     this.concurrency = new ConcurrencyController(maxConcurrent);
     this.intentClassifier = new IntentClassifier(provider);
+    this.scoringPasses = Math.max(1, scoringPasses);
   }
 
   /** Halve concurrency on rate-limit (429) */
@@ -278,10 +280,27 @@ export class ScoringEngine {
    * 15 yes/no questions instead of single 0-100 score.
    * ideaScore = (yes_count / 15) * 100
    * Evidence: inter-evaluator agreement +0.45, Pearson 0.912 vs 0.745 for numeric scales.
+   *
+   * Multi-pass self-consistency (Wang et al. 2023): when scoringPasses > 1,
+   * runs N times with varied temperature and takes median by yesCount.
    */
   private async scoreLLM(pr: PRData): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string; checklist?: boolean[] }> {
+    if (this.scoringPasses <= 1) {
+      return this.scoreLLMSingle(pr, 0.1);
+    }
+
+    // Multi-pass: run N times with slightly higher temperature, take median
+    const results = await Promise.all(
+      Array.from({ length: this.scoringPasses }, () => this.scoreLLMSingle(pr, 0.4))
+    );
+    results.sort((a, b) => a.score - b.score);
+    return results[Math.floor(results.length / 2)];
+  }
+
+  private async scoreLLMSingle(pr: PRData, temperature: number): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string; checklist?: boolean[] }> {
     const filesStr = pr.changedFiles.slice(0, 30).join(', ');
     const input = `Title: ${pr.title}\nBody: ${(pr.body ?? '').slice(0, 2000)}\nFiles: ${filesStr}`.slice(0, 4000);
+    const issueCtx = pr.issueContext ? `\nLinked issue:\n${pr.issueContext.slice(0, 1000)}\n` : '';
 
     const prompt = `Evaluate the IDEA VALUE of this PR by answering each question with true or false.
 Score the IDEA and the problem it solves, NOT the PR quality or polish.
@@ -291,13 +310,16 @@ IMPORTANT:
 - Do NOT trust the PR title at face value. A PR titled "feat(security)" that only adds unintegrated utility functions has less value than a simple null-check that prevents real crashes.
 - Code that is NOT wired into the running system yet (standalone utilities, helpers not called anywhere) has potential but NOT immediate value — answer Q10, Q11, Q14 as false for unintegrated code.
 - Config/default changes that affect ALL installations or users count as broad impact for Q7.
+- Community contributions (new plugins, skills, integrations, documentation for ecosystem) have value — answer Q5 as true.
+- Security vulnerability fixes (prototype pollution, injection, auth bypass) protect ALL users even if unexploited — they deserve high scores.
+- Documentation that only promotes the author's own unrelated external project is self-promotion, not a contribution.
 
 Questions:
 1. Does this fix a bug that users have reported or would encounter in normal usage?
-2. Does this address a security concern (timing attack, injection, auth bypass, prototype pollution, secret exposure, path traversal, XSS, or similar)?
+2. Does this address a security vulnerability, hardening need, or defense-in-depth concern (timing attack, injection, auth bypass, access control, secret exposure, path traversal, XSS, or similar)?
 3. Does this fix a crash, service failure, or error scenario (null/undefined errors, uncaught exceptions, blank screens, broken workflows, unhandled edge cases)?
 4. Does this solve a performance problem (latency, memory, CPU, resource leaks)?
-5. Does this add a meaningful new user-facing capability or workflow?
+5. Does this add a meaningful new capability, configuration option, integration, or community contribution?
 6. Does this improve developer experience (DX, tooling, debugging, deployment)?
 7. Does the problem affect multiple users, environments, or use cases (broad impact)?
 8. Is the technical approach sound and well-reasoned for the problem at hand?
@@ -316,12 +338,19 @@ Calibration anchors:
 - Typo fix in README: [false,false,false,false,false,false,false,true,false,false,false,false,true,false,false] = 2/15
 - Spam/empty PR with no real changes: [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] = 0/15
 - Config default changes affecting all users (token optimization, memory settings): [false,false,false,true,false,false,true,true,false,false,true,false,true,false,true] = 6/15
+- Community plugin documentation (new ecosystem skill/plugin page): [false,false,false,false,true,false,false,true,false,false,false,false,true,false,true] = 4/15
+- Security config option for network access control (e.g., strictLoopback): [false,true,false,false,true,false,true,true,false,true,true,false,true,false,true] = 8/15
+- Proactive security hardening (TLS warnings, auth validation, defense-in-depth): [false,true,false,false,false,false,true,true,false,true,true,true,true,true,true] = 9/15
+- Critical security vulnerability fix blocking prototype pollution / injection in template resolver: [false,true,false,false,false,false,true,true,true,true,true,true,true,true,true] = 10/15
+- Crash prevention: catching unhandled I/O write failures that crash the gateway process: [true,false,true,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
+- Self-promotional documentation page for author's own unrelated external npm package (not integrated with the project): [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] = 0/15
+- Small focused UX fix: removing stale UI reaction emoji after bot reply in Slack (real reproducible bug, clean fix): [true,false,false,false,false,false,false,true,false,false,true,true,true,false,true] = 6/15
 
 Return JSON: {"answers": [true/false for each of the 15 questions], "risk": "low"|"medium"|"high", "reason": "<1 sentence>"}
-
+${issueCtx}
 ${input}`;
 
-    const text = await this.provider!.generateText(prompt, { temperature: 0.1, maxTokens: 300 });
+    const text = await this.provider!.generateText(prompt, { temperature, maxTokens: 300 });
 
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('No JSON found in LLM response');

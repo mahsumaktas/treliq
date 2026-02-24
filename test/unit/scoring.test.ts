@@ -743,6 +743,71 @@ describe('ScoringEngine', () => {
     });
   });
 
+  describe('issue context enrichment', () => {
+    it('includes issueContext in LLM prompt when available', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = checklistResponse(11, 'low', 'With context');
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData({
+        issueContext: 'Bug: login crashes when password contains special chars',
+      });
+      const scored = await engine.score(pr);
+      expect(scored.ideaScore).toBe(73);
+      // Verify the prompt contained the issue context
+      expect(provider.generateTextCalls.length).toBe(1);
+      expect(provider.generateTextCalls[0].prompt).toContain('login crashes when password');
+    });
+
+    it('works without issueContext', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = checklistResponse(10, 'low', 'No context');
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.ideaScore).toBe(67);
+      expect(provider.generateTextCalls[0].prompt).not.toContain('Linked issue:');
+    });
+  });
+
+  describe('median-of-N scoring passes', () => {
+    it('uses single pass by default', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = checklistResponse(10, 'low', 'Single');
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      await engine.score(pr);
+      expect(provider.generateTextCalls.length).toBe(1);
+    });
+
+    it('runs N passes and takes median when scoringPasses > 1', async () => {
+      const provider = new MockLLMProvider();
+      let callCount = 0;
+      provider.generateTextResponse = () => {
+        callCount++;
+        // Return different scores: 8, 10, 12 yes
+        const yesCount = [8, 12, 10][callCount - 1] ?? 10;
+        return checklistResponse(yesCount, 'low', `Pass ${callCount}`);
+      };
+      const engine = new ScoringEngine(provider, false, 5, 3);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      // Should make 3 LLM calls
+      expect(provider.generateTextCalls.length).toBe(3);
+      // Median of [53, 67, 80] sorted = 67 (10/15)
+      expect(scored.ideaScore).toBe(67);
+    });
+
+    it('enforces minimum 1 pass', async () => {
+      const provider = new MockLLMProvider();
+      provider.generateTextResponse = checklistResponse(11, 'low', 'Min pass');
+      const engine = new ScoringEngine(provider, false, 5, 0);
+      const pr = createPRData();
+      await engine.score(pr);
+      // Should still make 1 call even with 0 passes
+      expect(provider.generateTextCalls.length).toBe(1);
+    });
+  });
+
   describe('spam detection', () => {
     it('marks PR as spam when spam score < 25', async () => {
       const engine = new ScoringEngine();

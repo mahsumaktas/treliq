@@ -52,6 +52,8 @@ export interface PRData {
   milestone?: string;
   requestedReviewers: string[];
   codeowners: string[];
+  /** Optional linked issue description for LLM context enrichment */
+  issueContext?: string;
 }
 
 export interface SignalScore {

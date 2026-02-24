@@ -10,7 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - **Scoring v2: Dual scoring system** — `ideaScore` (fikir degeri, LLM-driven) ve `readinessScore` (merge hazirlik, TOPSIS-based) olarak ayristi
 - **CheckEval binary checklist** replaces single numeric LLM scoring (evidence: CheckEval EMNLP 2025, "Rubric Is All You Need" ACM ICER 2025). 15 yes/no questions for idea value — mechanically eliminates score compression.
 - **Weighted geometric mean** replaces additive formula for totalScore (evidence: Triantaphyllou 2001, PMC 729-scenario simulation). `totalScore = ideaScore^0.65 * readinessScore^0.35` with floor=5 for zero-veto protection.
-- **Few-shot calibration anchors** in LLM prompt (evidence: Zhao et al. ICML 2021). 5 reference examples spanning full score range break central tendency bias.
+- **Few-shot calibration anchors** in LLM prompt (evidence: Zhao et al. ICML 2021). 9 reference examples spanning full score range break central tendency bias.
 - TOPSIS replaces weighted average for readiness scoring (evidence: MCDM literature)
 - Neutral/missing signal values now score 0 instead of 30-50
 - Contributor signal weight reduced 0.12 → 0.04 (AI agents can produce excellent PRs)
@@ -21,6 +21,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Tier classification: critical/high/normal/low based on ideaScore + readinessScore
 - Percentile rank normalization in batch scoring
 - `ideaScore`, `ideaReason`, `ideaChecklist`, `readinessScore`, `penaltyMultiplier`, `tier`, `percentileRank` fields on ScoredPR
+- **Median-of-N self-consistency** (Wang et al. 2023) — configurable multi-pass LLM scoring with median selection for variance reduction
+- **Issue context enrichment** (ContextCRBench 2025) — linked issue descriptions included in LLM prompt for +79.93% F1 improvement
+- `issueContext` optional field on PRData for linked issue descriptions
+- 3 new calibration anchors: community plugin docs (4/15), security config option (8/15), proactive hardening (9/15)
 
 ## [0.7.0] - 2026-02-22
 
