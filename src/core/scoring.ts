@@ -267,9 +267,9 @@ export class ScoringEngine {
 
   /** Assign priority tier based on ideaScore + readinessScore */
   private assignTier(ideaScore: number, readinessScore: number): 'critical' | 'high' | 'normal' | 'low' {
-    if (ideaScore >= 80 && readinessScore >= 60) return 'critical';
-    if (ideaScore >= 70) return 'high';
-    if (ideaScore >= 45) return 'normal';
+    if (ideaScore >= 80 && readinessScore >= 55) return 'critical';
+    if (ideaScore >= 67) return 'high';
+    if (ideaScore >= 40) return 'normal';
     return 'low';
   }
 
@@ -286,29 +286,32 @@ export class ScoringEngine {
     const prompt = `Evaluate the IDEA VALUE of this PR by answering each question with true or false.
 Score the IDEA and the problem it solves, NOT the PR quality or polish.
 
+IMPORTANT: Diff size does NOT determine value. A 4-line fix preventing crashes for all users
+is MORE valuable than a 500-line cosmetic refactor. Judge the PROBLEM being solved.
+
 Questions:
-1. Does this fix a bug that users have reported or would encounter?
-2. Does this address a security vulnerability?
-3. Does this fix a crash, data loss, or data corruption scenario?
-4. Does this solve a performance problem?
-5. Does this add a new user-facing capability?
-6. Does this improve developer experience (DX, tooling, workflow)?
-7. Does the problem affect multiple users or use cases (broad impact)?
-8. Is the technical approach sound and well-reasoned?
-9. Does this remove meaningful technical debt?
-10. Is this a novel/non-obvious solution (not just a trivial fix)?
-11. Would you want this change in your own codebase?
-12. Does this address a documented issue or known pain point?
-13. Does the approach align with the project's architecture?
-14. Could this benefit other projects beyond the immediate scope?
-15. Is the problem important for the project's long-term health?
+1. Does this fix a bug that users have reported or would encounter in normal usage?
+2. Does this address a security concern (timing attack, injection, auth bypass, prototype pollution, secret exposure, path traversal, XSS, or similar)?
+3. Does this fix a crash, service failure, or error scenario (null/undefined errors, uncaught exceptions, blank screens, broken workflows, unhandled edge cases)?
+4. Does this solve a performance problem (latency, memory, CPU, resource leaks)?
+5. Does this add a meaningful new user-facing capability or workflow?
+6. Does this improve developer experience (DX, tooling, debugging, deployment)?
+7. Does the problem affect multiple users, environments, or use cases (broad impact)?
+8. Is the technical approach sound and well-reasoned for the problem at hand?
+9. Does this remove meaningful technical debt or improve maintainability?
+10. Would leaving this unfixed cause real harm, breakage, or security risk?
+11. Would you want this change in your own production codebase?
+12. Does this address a documented issue, known pain point, or recurring problem?
+13. Does the approach align with the project's architecture and conventions?
+14. Does this prevent a failure mode that could affect production stability or data integrity?
+15. Is the problem important for the project's long-term health and reliability?
 
 Calibration anchors:
-- Security fix patching CVE in auth module: [true,true,true,false,false,false,true,true,true,true,true,true,true,false,true] = 11/15
+- Security fix adding timingSafeEqual to prevent timing attacks (3 lines changed): [true,true,false,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
+- Fix for null/undefined crash in UI filter affecting all users (8 lines): [true,false,true,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
 - Typo fix in README: [false,false,false,false,false,false,false,true,false,false,false,false,true,false,false] = 2/15
-- New API endpoint for user dashboard: [false,false,false,false,true,true,true,true,false,true,true,true,true,true,true] = 10/15
 - Spam/empty PR with no real changes: [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] = 0/15
-- Routine dependency bump: [false,false,false,false,false,false,false,true,false,false,true,false,true,false,true] = 4/15
+- New API endpoint for user dashboard: [false,false,false,false,true,true,true,true,false,false,true,true,true,false,true] = 8/15
 
 Return JSON: {"answers": [true/false for each of the 15 questions], "risk": "low"|"medium"|"high", "reason": "<1 sentence>"}
 

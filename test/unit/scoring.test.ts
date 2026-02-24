@@ -606,7 +606,7 @@ describe('ScoringEngine', () => {
   });
 
   describe('tier classification', () => {
-    it('assigns critical when ideaScore>=80 and readiness>=60', async () => {
+    it('assigns critical when ideaScore>=80 and readiness>=55', async () => {
       const provider = new MockLLMProvider();
       // 13 yes → ideaScore=87
       provider.generateTextResponse = checklistResponse(13, 'low', 'Critical fix');
@@ -617,7 +617,7 @@ describe('ScoringEngine', () => {
       expect(scored.tier).toBe('critical');
     });
 
-    it('assigns high when ideaScore>=70 but readiness<60', async () => {
+    it('assigns high when ideaScore>=67 (10/15) but readiness<55', async () => {
       const provider = new MockLLMProvider();
       // 11 yes → ideaScore=73
       provider.generateTextResponse = checklistResponse(11, 'low', 'Good idea');
@@ -625,11 +625,22 @@ describe('ScoringEngine', () => {
       // Draft PR = low readiness due to 0.4x penalty
       const pr = createPRData({ isDraft: true });
       const scored = await engine.score(pr);
-      // Draft penalty drops readiness below 60
+      // Draft penalty drops readiness below 55
       expect(scored.tier).toBe('high');
     });
 
-    it('assigns normal when ideaScore 45-69', async () => {
+    it('assigns high for exactly 10/15 (ideaScore=67)', async () => {
+      const provider = new MockLLMProvider();
+      // 10 yes → ideaScore=67
+      provider.generateTextResponse = checklistResponse(10, 'low', 'Security fix');
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.ideaScore).toBe(67);
+      expect(scored.tier).toBe('high');
+    });
+
+    it('assigns normal when ideaScore 40-66', async () => {
       const provider = new MockLLMProvider();
       // 8 yes → ideaScore=53
       provider.generateTextResponse = checklistResponse(8, 'low', 'Routine fix');
@@ -639,7 +650,7 @@ describe('ScoringEngine', () => {
       expect(scored.tier).toBe('normal');
     });
 
-    it('assigns low when ideaScore<45', async () => {
+    it('assigns low when ideaScore<40', async () => {
       const provider = new MockLLMProvider();
       // 3 yes → ideaScore=20
       provider.generateTextResponse = checklistResponse(3, 'low', 'Trivial');
