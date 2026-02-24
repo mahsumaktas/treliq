@@ -281,8 +281,15 @@ export class ScoringEngine {
     }
     let trustBonus = knownContributor ? -1 : 0;
 
-    if (pr.additions + pr.deletions < 3) { spamScore += 2; reasons.push('<3 lines'); }
-    else if (pr.additions + pr.deletions < 5) { spamScore++; reasons.push('<5 lines'); }
+    // Net-zero detection: code added then reverted
+    const netChange = Math.abs(pr.additions - pr.deletions);
+    const totalLines = pr.additions + pr.deletions;
+    if (totalLines >= 10 && totalLines > 0 && (netChange / totalLines) < 0.05) {
+      spamScore += 3; reasons.push(`Reverted/no-op: +${pr.additions}/-${pr.deletions}`);
+    }
+
+    if (totalLines < 3) { spamScore += 2; reasons.push('<3 lines'); }
+    else if (totalLines < 5) { spamScore++; reasons.push('<5 lines'); }
     if (!pr.hasIssueRef) { spamScore++; reasons.push('No issue ref'); }
     if ((pr.body ?? '').length < 20) { spamScore++; reasons.push('No/short description'); }
     const docsOnly = pr.changedFiles.every(f => /readme|contributing|license|changelog|\.md$|\.txt$/i.test(f));
@@ -325,6 +332,23 @@ export class ScoringEngine {
     else if (days <= 30) { score = 70; label = 'Aging'; }
     else if (days <= 90) { score = 40; label = 'Stale'; }
     else { score = 15; label = 'Very stale'; }
+
+    // Abandoned/incomplete detection: old PR + inactivity signals
+    const titleBody = `${pr.title} ${pr.body ?? ''}`.toLowerCase();
+    const hasWipMarkers = /\bwip\b|\btodo\b|\bfixme\b|\bhack\b|\bwip:/i.test(pr.title) || pr.isDraft;
+    const isAbandoned = days > 180 && pr.commentCount <= 1 && pr.reviewState === 'none';
+
+    if (isAbandoned && hasWipMarkers) {
+      score = 5;
+      label = 'Abandoned+WIP';
+    } else if (isAbandoned) {
+      score = Math.min(score, 10);
+      label = 'Abandoned';
+    } else if (days > 90 && hasWipMarkers) {
+      score = Math.min(score, 10);
+      label = 'Stale+WIP';
+    }
+
     return { name: 'staleness', score, weight: 0.07, reason: `${days}d old (${label})` };
   }
 
@@ -510,11 +534,21 @@ export class ScoringEngine {
     };
   }
 
-  /** Large PR complexity: detect overengineered or massive PRs */
+  /** Large PR complexity: detect overengineered, massive, or reverted PRs */
   private scoreComplexity(pr: PRData): SignalScore {
     const total = pr.additions + pr.deletions;
     const files = pr.changedFiles;
-    if (total === 0) return { name: 'complexity', score: 50, weight: 0.05, reason: 'Empty diff' };
+    if (total === 0) return { name: 'complexity', score: 5, weight: 0.05, reason: 'Empty diff — no actual changes' };
+
+    // Net-zero detection: additions ≈ deletions means code was likely reverted
+    const netChange = Math.abs(pr.additions - pr.deletions);
+    const churn = total > 0 ? netChange / total : 1;
+    if (total >= 10 && churn < 0.05) {
+      return { name: 'complexity', score: 5, weight: 0.05, reason: `Reverted/no-op: +${pr.additions}/-${pr.deletions} (net change ${netChange} lines, ${Math.round(churn * 100)}% effective)` };
+    }
+    if (total >= 20 && churn < 0.15) {
+      return { name: 'complexity', score: 20, weight: 0.05, reason: `Near-reverted: +${pr.additions}/-${pr.deletions} (net ${netChange}, ${Math.round(churn * 100)}% effective)` };
+    }
 
     let score = 80;
     const flags: string[] = [];

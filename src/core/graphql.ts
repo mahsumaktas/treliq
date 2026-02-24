@@ -129,10 +129,12 @@ export const SINGLE_PR_QUERY = `
         changedFiles
         milestone { title }
         labels(first: 50) { nodes { name } }
-        requestedReviewers(first: 20) {
+        reviewRequests(first: 20) {
           nodes {
-            ... on User { login }
-            ... on Team { name }
+            requestedReviewer {
+              ... on User { login }
+              ... on Team { name }
+            }
           }
         }
         reviews(last: 50) {
