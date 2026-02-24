@@ -22,7 +22,7 @@ export { ActionExecutor } from './core/action-executor';
 export { DiffAnalyzer } from './core/diff-analyzer';
 export { SemanticMatcher } from './core/semantic-matcher';
 export { HolisticRanker } from './core/holistic-ranker';
-export type { PRData, ScoredPR, ScoredIssue, IssueData, DedupCluster, TreliqConfig, TreliqResult, TriageItem, DiffAnalysis, SemanticMatch } from './core/types';
+export type { PRData, ScoredPR, ScoredIssue, IssueData, DedupCluster, TreliqConfig, TreliqResult, TriageItem, DiffAnalysis, SemanticMatch, CascadeConfig, ScoringEngineOptions } from './core/types';
 export type { ActionItem, ActionOptions } from './core/actions';
 export type { ExecutionResult } from './core/action-executor';
 export { loadCache, saveCache, configHash } from './core/cache';

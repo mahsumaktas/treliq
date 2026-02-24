@@ -39,6 +39,7 @@ export function createPRData(overrides: Partial<PRData> = {}): PRData {
     milestone: undefined,
     requestedReviewers: ['reviewer1'],
     codeowners: ['testuser'],
+    state: 'open',
   };
 
   return { ...defaults, ...overrides };
@@ -54,7 +55,7 @@ export function createScoredPR(overrides: Partial<ScoredPR> = {}): ScoredPR {
     { name: 'ci_status', score: 100, weight: 0.15, reason: 'CI: success' },
     { name: 'diff_size', score: 100, weight: 0.07, reason: '120 lines changed (100+/20-)' },
     { name: 'commit_quality', score: 90, weight: 0.04, reason: 'Conventional commit format' },
-    { name: 'contributor', score: 70, weight: 0.12, reason: 'testuser (CONTRIBUTOR)' },
+    { name: 'contributor', score: 70, weight: 0.04, reason: 'testuser (CONTRIBUTOR)' },
     { name: 'issue_ref', score: 90, weight: 0.07, reason: 'References: #42' },
     { name: 'spam', score: 100, weight: 0.12, reason: 'No spam signals' },
     { name: 'test_coverage', score: 90, weight: 0.12, reason: '1 test file(s) changed' },
@@ -65,10 +66,13 @@ export function createScoredPR(overrides: Partial<ScoredPR> = {}): ScoredPR {
     { name: 'activity', score: 90, weight: 0.04, reason: '5 comments' },
     { name: 'breaking_change', score: 80, weight: 0.04, reason: 'No breaking change signals' },
     { name: 'draft_status', score: 90, weight: 0.08, reason: 'Ready for review' },
-    { name: 'milestone', score: 40, weight: 0.07, reason: 'No milestone attached' },
-    { name: 'label_priority', score: 50, weight: 0.05, reason: 'No priority labels' },
+    { name: 'milestone', score: 0, weight: 0.07, reason: 'No milestone attached' },
+    { name: 'label_priority', score: 0, weight: 0.05, reason: 'No priority labels' },
     { name: 'codeowners', score: 95, weight: 0.10, reason: 'Author owns 1 matched pattern(s)' },
     { name: 'requested_reviewers', score: 80, weight: 0.05, reason: '1 reviewer(s): reviewer1' },
+    { name: 'scope_coherence', score: 70, weight: 0.06, reason: 'normal: 2 area(s)' },
+    { name: 'complexity', score: 80, weight: 0.05, reason: 'proportional: 120 lines, 3 files' },
+    { name: 'intent', score: 0, weight: 0, reason: 'feature (conventional prefix)' },
   ];
 
   const defaults: ScoredPR = {
@@ -86,6 +90,15 @@ export function createScoredPR(overrides: Partial<ScoredPR> = {}): ScoredPR {
     visionScore: undefined,
     visionReason: undefined,
     intent: overrides.intent,
+    ideaScore: undefined,
+    ideaReason: undefined,
+    readinessScore: undefined,
+    penaltyMultiplier: undefined,
+    percentileRank: undefined,
+    tier: undefined,
+    scoredBy: undefined,
+    readyToSteal: false,
+    noveltyBonus: undefined,
   };
 
   const signals = overrides.signals ?? defaultSignals;

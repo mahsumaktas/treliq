@@ -4,6 +4,43 @@ All notable changes to Treliq will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-02-24
+
+### Added
+- **Cascade pipeline**: Heuristic pre-filter → Haiku → Sonnet re-score
+  - `readinessScore < 15 || isSpam` → skip LLM ($0)
+  - Haiku ideaScore < 40 → final (no Sonnet call)
+  - Haiku ideaScore >= 40 → Sonnet re-score for precision
+  - Estimated cost: ~$13 for 4051 PRs (vs $27 Sonnet-only)
+- `scoredBy` field: 'heuristic' | 'haiku' | 'sonnet'
+- `readyToSteal` flag: ideaScore >= 70 && implScore >= 80 && state=closed/merged
+- `noveltyBonus` field on ScoredPR
+- `CascadeConfig` and `ScoringEngineOptions` types
+- `PRData.state` field (open/closed/merged)
+- `ScoringEngine` constructor accepts options object (backward compat preserved)
+- `scoreLLM/scoreLLMSingle` accept optional provider parameter for re-scoring
+
+### Changed
+- **Triple scoring: idea + implementation + readiness** — `ideaScore` (fikir/problem degeri, 10 LLM soru), `implementationScore` (kod kalitesi, 5 LLM soru), `readinessScore` (merge hazirlik, TOPSIS heuristic)
+- **CheckEval binary checklist** split into PART A (10 idea questions) and PART B (5 implementation questions). Evidence: CheckEval EMNLP 2025, "Rubric Is All You Need" ACM ICER 2025.
+- **Idea-first scoring formula**: `totalScore = 0.7 * ideaScore + 0.3 * implementationScore`. Fikir madenciligi: PR'in kodu cop olsa bile fikri degerli olabilir.
+- **Tier classification idea-driven**: critical (>=80), high (>=60), normal (>=30), low (<30) — purely based on ideaScore
+- **Few-shot calibration anchors** with dual scoring (12 references with idea/impl breakdown). Evidence: Zhao et al. ICML 2021.
+- TOPSIS replaces weighted average for readiness scoring (evidence: MCDM literature)
+- Neutral/missing signal values now score 0 instead of 30-50
+- Contributor signal weight reduced 0.12 → 0.04 (AI agents can produce excellent PRs)
+- Intent signal removed from scoring formula (only affects weight profiles)
+- Diff analysis bonus now affects `implementationScore` instead of `ideaScore`
+
+### Added
+- Hard penalty multipliers for CI failure (0.4x), merge conflict (0.5x), spam (0.2x), draft (0.4x), abandoned (0.3x)
+- Percentile rank normalization in batch scoring
+- `ideaScore`, `ideaReason`, `ideaChecklist`, `implementationScore`, `implementationReason`, `implementationChecklist`, `readinessScore`, `penaltyMultiplier`, `tier`, `percentileRank` fields on ScoredPR
+- **Median-of-N self-consistency** (Wang et al. 2023) — configurable multi-pass LLM scoring with median selection for variance reduction
+- **Issue context enrichment** (ContextCRBench 2025) — linked issue descriptions included in LLM prompt
+- `issueContext` optional field on PRData for linked issue descriptions
+- 12 dual calibration anchors spanning full score range (idea + implementation breakdown)
+
 ## [0.7.0] - 2026-02-22
 
 ### Added
@@ -141,6 +178,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Vision document alignment (VISION.md / ROADMAP.md check via LLM)
 - Output formats: table, JSON, markdown, GitHub comment
 
+[0.8.0]: https://github.com/mahsumaktas/treliq/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mahsumaktas/treliq/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mahsumaktas/treliq/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mahsumaktas/treliq/compare/v0.5.0...v0.5.1

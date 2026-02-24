@@ -2,12 +2,13 @@ import { ScoringEngine } from '../../src/core/scoring';
 import { createPRData } from '../fixtures/pr-factory';
 
 describe('Intent-Aware Scoring Profiles', () => {
-  it('uses intent weight of 0.15', async () => {
+  it('intent signal has weight 0 (disabled in v0.8, only affects via profiles)', async () => {
     const engine = new ScoringEngine();
     const pr = createPRData({ title: 'feat: add feature' });
     const scored = await engine.score(pr);
     const signal = scored.signals.find(s => s.name === 'intent');
-    expect(signal?.weight).toBeGreaterThan(0);
+    expect(signal?.weight).toBe(0);
+    expect(signal?.score).toBe(0);
   });
 
   it('applies bugfix profile: higher ci_status weight', async () => {

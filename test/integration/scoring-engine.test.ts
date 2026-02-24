@@ -4,7 +4,7 @@
 
 import { ScoringEngine } from '../../src/core/scoring';
 import { createPRData } from '../fixtures/pr-factory';
-import { MockLLMProvider } from '../fixtures/mock-provider';
+import { MockLLMProvider, dualChecklistResponse } from '../fixtures/mock-provider';
 
 describe('ScoringEngine', () => {
   describe('Heuristic-only scoring (no LLM)', () => {
@@ -48,10 +48,11 @@ describe('ScoringEngine', () => {
     });
   });
 
-  describe('LLM blend scoring', () => {
-    it('should blend heuristic and LLM scores', async () => {
+  describe('LLM dual scoring', () => {
+    it('should produce idea + implementation scores', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 75, "risk": "low", "reason": "Good implementation"}';
+      // 7*8 + bonus 14 = 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good implementation', 14);
 
       const engine = new ScoringEngine(provider);
       const pr = createPRData({
@@ -64,26 +65,29 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      expect(scored.llmScore).toBe(75);
+      expect(scored.llmScore).toBe(70);  // backward compat = ideaScore
+      expect(scored.ideaScore).toBe(70);
+      expect(scored.implementationScore).toBe(80);
       expect(scored.llmRisk).toBe('low');
       expect(scored.llmReason).toBe('Good implementation');
 
-      // totalScore = 0.4 * heuristic + 0.6 * 75
-      expect(scored.totalScore).toBeGreaterThan(0);
-      expect(scored.totalScore).toBeLessThanOrEqual(100);
+      // totalScore = 0.7 * idea + 0.3 * implementation
+      expect(scored.totalScore).toBe(Math.round(0.7 * 70 + 0.3 * 80));
 
-      // Verify provider was called
+      // Verify provider was called with hybrid checklist prompt
       expect(provider.generateTextCalls.length).toBe(1);
       expect(provider.generateTextCalls[0].prompt).toContain('feat: add authentication');
+      expect(provider.generateTextCalls[0].prompt).toContain('PART A');
+      expect(provider.generateTextCalls[0].prompt).toContain('PART B');
+      expect(provider.generateTextCalls[0].prompt).toContain('PART C');
     });
 
-    it('should use exact blend formula: 0.4 * heuristic + 0.6 * LLM', async () => {
+    it('should use weighted average formula', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Test"}';
+      // 8*8 + bonus 16 = 80, 5/5 impl → 100
+      provider.generateTextResponse = dualChecklistResponse(8, 5, 'low', 'Test', 16);
 
       const engine = new ScoringEngine(provider);
-
-      // Create a PR that should score exactly 100 heuristically
       const pr = createPRData({
         ciStatus: 'success',
         additions: 200,
@@ -97,36 +101,32 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      // Calculate expected weighted heuristic score
-      const heuristicScore = scored.signals.reduce((sum, s) => sum + s.score * s.weight, 0) /
-                            scored.signals.reduce((sum, s) => sum + s.weight, 0);
-
-      // Expected: 0.4 * heuristic + 0.6 * 80
-      const expected = Math.round(0.4 * heuristicScore + 0.6 * 80);
-
-      expect(scored.llmScore).toBe(80);
-      expect(scored.totalScore).toBe(expected);
+      expect(scored.ideaScore).toBe(80);
+      expect(scored.implementationScore).toBe(100);
+      expect(scored.llmScore).toBe(80); // backward compat
+      // totalScore = round(0.7 * 80 + 0.3 * 100) = round(56 + 30) = 86
+      expect(scored.totalScore).toBe(86);
     });
 
     it('should handle different LLM risk levels', async () => {
       const provider = new MockLLMProvider();
 
       // Test low risk
-      provider.generateTextResponse = '{"score": 90, "risk": "low", "reason": "Safe change"}';
+      provider.generateTextResponse = dualChecklistResponse(9, 5, 'low', 'Safe change');
       let engine = new ScoringEngine(provider);
       let scored = await engine.score(createPRData());
       expect(scored.llmRisk).toBe('low');
 
       // Test medium risk
       provider.reset();
-      provider.generateTextResponse = '{"score": 60, "risk": "medium", "reason": "Some concerns"}';
+      provider.generateTextResponse = dualChecklistResponse(5, 3, 'medium', 'Some concerns');
       engine = new ScoringEngine(provider);
       scored = await engine.score(createPRData());
       expect(scored.llmRisk).toBe('medium');
 
       // Test high risk
       provider.reset();
-      provider.generateTextResponse = '{"score": 30, "risk": "high", "reason": "Breaking changes"}';
+      provider.generateTextResponse = dualChecklistResponse(3, 1, 'high', 'Breaking changes');
       engine = new ScoringEngine(provider);
       scored = await engine.score(createPRData());
       expect(scored.llmRisk).toBe('high');
@@ -145,12 +145,13 @@ describe('ScoringEngine', () => {
       const results = await engine.scoreMany(prs);
 
       expect(results).toHaveLength(3);
-      expect(results[0].number).toBe(1);
-      expect(results[1].number).toBe(2);
-      expect(results[2].number).toBe(3);
+      // v0.8: scoreMany sorts by totalScore for percentile rank
+      const numbers = results.map(r => r.number).sort();
+      expect(numbers).toEqual([1, 2, 3]);
       results.forEach(pr => {
         expect(pr.totalScore).toBeGreaterThan(0);
         expect(pr.signals.length).toBeGreaterThan(0);
+        expect(pr.percentileRank).toBeDefined();
       });
     });
 
@@ -162,7 +163,8 @@ describe('ScoringEngine', () => {
 
     it('should process PRs with LLM provider', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 75, "risk": "low", "reason": "Good"}';
+      // 7*8 + bonus 14 = 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good', 14);
 
       const engine = new ScoringEngine(provider);
       const prs = [
@@ -173,8 +175,8 @@ describe('ScoringEngine', () => {
       const results = await engine.scoreMany(prs);
 
       expect(results).toHaveLength(2);
-      expect(results[0].llmScore).toBe(75);
-      expect(results[1].llmScore).toBe(75);
+      expect(results[0].llmScore).toBe(70); // 7*8 + 14
+      expect(results[1].llmScore).toBe(70);
       expect(provider.generateTextCalls.length).toBe(2);
     });
   });
@@ -217,15 +219,18 @@ describe('ScoringEngine', () => {
 
     it('should fall back on malformed LLM response', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"invalid": "response"}'; // Missing score/risk/reason
+      provider.generateTextResponse = '{"invalid": "response"}'; // Missing idea/implementation arrays
 
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
 
       const scored = await engine.score(pr);
 
-      // Should still work, potentially with default/clamped values
-      expect(scored.totalScore).toBeGreaterThan(0);
+      // Malformed response: idea=0/10, impl=0/5, both scores are 0
+      // totalScore = 0.7*0 + 0.3*0 = 0 — but scoring still completes
+      expect(scored.totalScore).toBeGreaterThanOrEqual(0);
+      expect(scored.ideaScore).toBe(0);
+      expect(scored.implementationScore).toBe(0);
     });
   });
 
@@ -335,13 +340,13 @@ describe('ScoringEngine', () => {
       const engine = new ScoringEngine();
       const pr = createPRData({
         author: 'new-contributor',
-        authorAssociation: 'FIRST_TIME_CONTRIBUTOR', // 40 base score
+        authorAssociation: 'FIRST_TIME_CONTRIBUTOR', // 25 base score (v0.8)
       });
 
       const scored = await engine.score(pr);
 
       const contributorSignal = scored.signals.find(s => s.name === 'contributor');
-      expect(contributorSignal!.score).toBe(40); // No reputation blend
+      expect(contributorSignal!.score).toBe(25); // No reputation blend
       expect(contributorSignal!.reason).not.toContain('rep:');
     });
 
@@ -391,9 +396,10 @@ describe('ScoringEngine', () => {
   });
 
   describe('Diff-enriched scoring blend', () => {
-    it('uses 0.4/0.3/0.3 blend when diff analysis available', async () => {
+    it('blends implementationScore with diff codeQuality when diff analysis available', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Good PR"}';
+      // 8*8 + bonus 16 = 80, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'Good PR', 16);
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -408,21 +414,19 @@ describe('ScoringEngine', () => {
       const pr = createPRData({ number: 1, title: 'fix: improve error handling' });
       const scored = await engine.score(pr);
 
-      // With diff: 0.4 * heuristic + 0.3 * 80 + 0.3 * 90
+      // v0.8: implementationScore = 0.6 * checklist + 0.4 * diffQuality = 0.6 * 80 + 0.4 * 90 = 84
       expect(scored.diffAnalysis).toBeDefined();
       expect(scored.diffAnalysis!.codeQuality).toBe(90);
-      expect(scored.totalScore).toBeGreaterThan(0);
+      expect(scored.implementationScore).toBe(Math.round(0.6 * 80 + 0.4 * 90));
+      expect(scored.ideaScore).toBe(80); // ideaScore unchanged
 
-      // Verify blend uses diff: totalScore should differ from 0.4*h + 0.6*80
-      const heuristicScore = scored.signals.reduce((sum, s) => sum + s.score * s.weight, 0) /
-                            scored.signals.reduce((sum, s) => sum + s.weight, 0);
-      const expectedWithDiff = Math.round(0.4 * heuristicScore + 0.3 * 80 + 0.3 * 90);
-      expect(scored.totalScore).toBe(expectedWithDiff);
+      // totalScore = round(0.7 * 80 + 0.3 * 84) = round(56 + 25.2) = 81
+      expect(scored.totalScore).toBe(Math.round(0.7 * 80 + 0.3 * 84));
     });
 
     it('overrides llmRisk from diff riskAssessment', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'ok');
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -442,7 +446,7 @@ describe('ScoringEngine', () => {
 
     it('does not override risk when diff says medium', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'ok');
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -462,7 +466,7 @@ describe('ScoringEngine', () => {
 
     it('maps critical diff risk to high llmRisk', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+      provider.generateTextResponse = dualChecklistResponse(8, 4, 'low', 'ok');
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -520,17 +524,124 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      const totalWeight = scored.signals.reduce((sum, s) => sum + s.weight, 0);
+      // Filter out intent signal (weight=0 by design in v0.8)
+      const activeSignals = scored.signals.filter(s => s.name !== 'intent');
+      const totalWeight = activeSignals.reduce((sum, s) => sum + s.weight, 0);
 
       // Total weight can exceed 1.0 — signals are normalized by total weight in score()
       expect(totalWeight).toBeGreaterThan(0.9);
       expect(totalWeight).toBeLessThan(2.0);
 
-      // Each signal should have positive weight
-      scored.signals.forEach(s => {
+      // Each active signal should have positive weight
+      activeSignals.forEach(s => {
         expect(s.weight).toBeGreaterThan(0);
         expect(s.weight).toBeLessThanOrEqual(1);
       });
+
+      // Intent signal should have weight 0 (only affects via profiles)
+      const intentSignal = scored.signals.find(s => s.name === 'intent');
+      expect(intentSignal?.weight).toBe(0);
+    });
+  });
+
+  describe('Cascade integration', () => {
+    it('cascade reduces LLM calls for mixed-quality batch', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+
+      // Haiku response varies per call: low score for junk, high for quality
+      let haikuCallCount = 0;
+      haiku.generateTextResponse = (prompt: string) => {
+        haikuCallCount++;
+        // Quality PRs get high scores, junk gets low
+        if (prompt.includes('Quality PR')) {
+          return dualChecklistResponse(7, 4, 'low', 'Good PR', 12); // 68 >= 40
+        }
+        return dualChecklistResponse(1, 1, 'low', 'Junk', 2); // 10 < 40
+      };
+      sonnet.generateTextResponse = dualChecklistResponse(6, 3, 'medium', 'Sonnet refined', 10);
+
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, haikuThreshold: 40 },
+      });
+
+      const prs = [
+        createPRData({ number: 1, title: 'Quality PR: auth system', ciStatus: 'success' }),
+        createPRData({
+          number: 2, title: 'fix typo', body: 'x',
+          additions: 1, deletions: 0, hasIssueRef: false, hasTests: false,
+          changedFiles: ['README.md'], authorAssociation: 'NONE',
+        }),
+        createPRData({ number: 3, title: 'Quality PR: security fix', ciStatus: 'success' }),
+      ];
+
+      const results = await engine.scoreMany(prs);
+      expect(results.length).toBe(3);
+
+      // PR #2 is spam → pre-filtered, no LLM calls
+      const spamPR = results.find(r => r.number === 2);
+      expect(spamPR?.scoredBy).toBe('heuristic');
+
+      // Quality PRs → Haiku + Sonnet
+      const qualityPRs = results.filter(r => r.number !== 2);
+      for (const pr of qualityPRs) {
+        expect(pr.scoredBy).toBe('sonnet');
+      }
+
+      // Sonnet only called for quality PRs (2 calls), not for spam
+      expect(sonnet.generateTextCalls.length).toBe(2);
+    });
+
+    it('Sonnet prompt identical to Haiku prompt', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      // Haiku above threshold → triggers Sonnet
+      haiku.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Above threshold', 12);
+      sonnet.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'Sonnet', 10);
+
+      const engine = new ScoringEngine({
+        provider: haiku,
+        cascade: { enabled: true, reScoreProvider: sonnet, haikuThreshold: 40 },
+      });
+
+      const pr = createPRData({ title: 'feat: new auth module' });
+      await engine.score(pr);
+
+      expect(haiku.generateTextCalls.length).toBe(1);
+      expect(sonnet.generateTextCalls.length).toBe(1);
+      // Both should receive the exact same prompt
+      expect(sonnet.generateTextCalls[0].prompt).toBe(haiku.generateTextCalls[0].prompt);
+    });
+
+    it('cascade with options-based constructor preserves all settings', async () => {
+      const haiku = new MockLLMProvider();
+      const sonnet = new MockLLMProvider();
+      haiku.generateTextResponse = dualChecklistResponse(3, 2, 'low', 'Below threshold', 4);
+
+      const engine = new ScoringEngine({
+        provider: haiku,
+        trustContributors: true,
+        maxConcurrent: 3,
+        cascade: {
+          enabled: true,
+          reScoreProvider: sonnet,
+          preFilterThreshold: 10,
+          haikuThreshold: 50,
+        },
+      });
+
+      const pr = createPRData({ authorAssociation: 'CONTRIBUTOR' });
+      const scored = await engine.score(pr);
+
+      // haiku ideaScore = 3*8+4 = 28 < 50 threshold → stays as haiku
+      expect(scored.scoredBy).toBe('haiku');
+      expect(scored.ideaScore).toBe(28);
+      expect(sonnet.generateTextCalls.length).toBe(0);
+
+      // Verify trustContributors works
+      const spamSignal = scored.signals.find(s => s.name === 'spam');
+      expect(spamSignal?.reason).toContain('Trusted contributor');
     });
   });
 });

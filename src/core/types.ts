@@ -19,6 +19,12 @@ export interface TreliqConfig {
   useCache: boolean;           // Use incremental cache (default: true)
   cacheFile: string;           // Cache file path (default: '.treliq-cache.json')
   dbPath?: string;             // SQLite database path (undefined = no DB)
+  cascade?: {
+    enabled: boolean;
+    reScoreProvider?: LLMProvider;
+    preFilterThreshold?: number;
+    haikuThreshold?: number;
+  };
 }
 
 export interface PRData {
@@ -52,6 +58,10 @@ export interface PRData {
   milestone?: string;
   requestedReviewers: string[];
   codeowners: string[];
+  /** Optional linked issue description for LLM context enrichment */
+  issueContext?: string;
+  /** PR state for readyToSteal detection */
+  state?: 'open' | 'closed' | 'merged';
 }
 
 export interface SignalScore {
@@ -68,7 +78,7 @@ export interface ScoredPR extends PRData {
   visionAlignment?: 'aligned' | 'tangential' | 'off-roadmap' | 'unchecked';
   visionScore?: number;        // 0-100 LLM vision alignment score
   visionReason?: string;
-  llmScore?: number;           // 0-100 LLM quality score
+  llmScore?: number;           // 0-100 LLM quality score (backward compat — maps to ideaScore)
   llmRisk?: 'low' | 'medium' | 'high';
   llmReason?: string;
   duplicateGroup?: number;     // Cluster ID if part of a duplicate group
@@ -79,6 +89,32 @@ export interface ScoredPR extends PRData {
   semanticMatches?: SemanticMatch[];
   holisticRank?: number;
   adjustedScore?: number;
+  /** Idea/fix value score (0-100) — how valuable is the core idea? */
+  ideaScore?: number;
+  /** Why this score for idea value */
+  ideaReason?: string;
+  /** Binary checklist answers from CheckEval idea questions */
+  ideaChecklist?: boolean[];
+  /** Implementation quality score (0-100) — how well is the code implemented? */
+  implementationScore?: number;
+  /** Why this score for implementation */
+  implementationReason?: string;
+  /** Binary checklist answers from CheckEval implementation questions */
+  implementationChecklist?: boolean[];
+  /** Merge-readiness score (0-100) — heuristic signals via TOPSIS */
+  readinessScore?: number;
+  /** Hard penalty multiplier applied to readiness */
+  penaltyMultiplier?: number;
+  /** Percentile rank within scored batch */
+  percentileRank?: number;
+  /** Priority tier based on combined scores */
+  tier?: 'critical' | 'high' | 'normal' | 'low';
+  /** Which model scored this PR */
+  scoredBy?: 'heuristic' | 'haiku' | 'sonnet';
+  /** Ready to steal: high-value closed PR we can re-implement */
+  readyToSteal?: boolean;
+  /** Novelty bonus (0-20) from CheckEval Part C */
+  noveltyBonus?: number;
 }
 
 export type IntentCategory = 'bugfix' | 'feature' | 'refactor' | 'dependency' | 'docs' | 'chore';
@@ -153,4 +189,19 @@ export interface TreliqResult {
   rankedPRs: ScoredPR[];       // Sorted by totalScore desc
   rankedIssues?: ScoredIssue[];
   summary: string;
+}
+
+export interface CascadeConfig {
+  enabled: boolean;
+  reScoreProvider: LLMProvider;
+  preFilterThreshold?: number;  // default: 15
+  haikuThreshold?: number;      // default: 40
+}
+
+export interface ScoringEngineOptions {
+  provider?: LLMProvider;
+  trustContributors?: boolean;
+  maxConcurrent?: number;
+  scoringPasses?: number;
+  cascade?: CascadeConfig;
 }
