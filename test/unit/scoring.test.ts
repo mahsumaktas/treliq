@@ -1,10 +1,10 @@
 /**
- * Unit tests for ScoringEngine — v0.8 dual scoring
+ * Unit tests for ScoringEngine — v0.8 dual scoring (idea + implementation)
  */
 
 import { ScoringEngine } from '../../src/core/scoring';
 import { createPRData } from '../fixtures/pr-factory';
-import { MockLLMProvider, checklistResponse } from '../fixtures/mock-provider';
+import { MockLLMProvider, dualChecklistResponse } from '../fixtures/mock-provider';
 
 describe('ScoringEngine', () => {
   describe('ci_status signal', () => {
@@ -128,11 +128,9 @@ describe('ScoringEngine', () => {
 
     it('has base weight 0.04 (before intent normalization)', async () => {
       const engine = new ScoringEngine();
-      // Use a title without conventional prefix to avoid intent profile overrides
       const pr = createPRData({ title: 'Update something', changedFiles: ['src/main.ts'] });
       const scored = await engine.score(pr);
       const signal = scored.signals.find(s => s.name === 'contributor');
-      // After normalization weights may shift, but contributor should be low relative to others
       expect(signal?.weight).toBeLessThan(0.1);
     });
   });
@@ -533,7 +531,6 @@ describe('ScoringEngine', () => {
         milestone: undefined,
       });
       const scored = await engine.score(pr);
-      // CI failure (0.4x) + conflict (0.5x) + draft (0.4x) = very low
       expect(scored.readinessScore!).toBeLessThan(15);
     });
   });
@@ -576,11 +573,9 @@ describe('ScoringEngine', () => {
         authorAssociation: 'NONE',
       });
       const scored = await engine.score(pr);
-      // If spam detected: 0.4 * 0.2 * 0.4 = 0.032
       if (scored.isSpam) {
         expect(scored.readinessScore!).toBeLessThan(10);
       } else {
-        // Even without spam: 0.4 * 0.4 = 0.16
         expect(scored.readinessScore!).toBeLessThan(20);
       }
     });
@@ -606,57 +601,57 @@ describe('ScoringEngine', () => {
   });
 
   describe('tier classification', () => {
-    it('assigns critical when ideaScore>=80 and readiness>=55', async () => {
+    it('assigns critical when ideaScore>=80', async () => {
       const provider = new MockLLMProvider();
-      // 13 yes → ideaScore=87
-      provider.generateTextResponse = checklistResponse(13, 'low', 'Critical fix');
+      // 8/10 idea → ideaScore=80, 5/5 impl → implScore=100
+      provider.generateTextResponse = dualChecklistResponse(8, 5, 'low', 'Critical fix');
       const engine = new ScoringEngine(provider);
-      const pr = createPRData(); // good defaults = high readiness
+      const pr = createPRData();
       const scored = await engine.score(pr);
-      expect(scored.ideaScore).toBeGreaterThanOrEqual(80);
+      expect(scored.ideaScore).toBe(80);
       expect(scored.tier).toBe('critical');
     });
 
-    it('assigns high when ideaScore>=67 (10/15) but readiness<55', async () => {
+    it('assigns high when ideaScore>=60', async () => {
       const provider = new MockLLMProvider();
-      // 11 yes → ideaScore=73
-      provider.generateTextResponse = checklistResponse(11, 'low', 'Good idea');
-      const engine = new ScoringEngine(provider);
-      // Draft PR = low readiness due to 0.4x penalty
-      const pr = createPRData({ isDraft: true });
-      const scored = await engine.score(pr);
-      // Draft penalty drops readiness below 55
-      expect(scored.tier).toBe('high');
-    });
-
-    it('assigns high for exactly 10/15 (ideaScore=67)', async () => {
-      const provider = new MockLLMProvider();
-      // 10 yes → ideaScore=67
-      provider.generateTextResponse = checklistResponse(10, 'low', 'Security fix');
+      // 7/10 idea → ideaScore=70
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Good idea');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
-      expect(scored.ideaScore).toBe(67);
+      expect(scored.ideaScore).toBe(70);
       expect(scored.tier).toBe('high');
     });
 
-    it('assigns normal when ideaScore 40-66', async () => {
+    it('assigns high for exactly 6/10 (ideaScore=60)', async () => {
       const provider = new MockLLMProvider();
-      // 8 yes → ideaScore=53
-      provider.generateTextResponse = checklistResponse(8, 'low', 'Routine fix');
+      provider.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'Decent fix');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
+      expect(scored.ideaScore).toBe(60);
+      expect(scored.tier).toBe('high');
+    });
+
+    it('assigns normal when ideaScore 30-59', async () => {
+      const provider = new MockLLMProvider();
+      // 5/10 idea → ideaScore=50
+      provider.generateTextResponse = dualChecklistResponse(5, 3, 'low', 'Routine fix');
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+      expect(scored.ideaScore).toBe(50);
       expect(scored.tier).toBe('normal');
     });
 
-    it('assigns low when ideaScore<40', async () => {
+    it('assigns low when ideaScore<30', async () => {
       const provider = new MockLLMProvider();
-      // 3 yes → ideaScore=20
-      provider.generateTextResponse = checklistResponse(3, 'low', 'Trivial');
+      // 2/10 idea → ideaScore=20
+      provider.generateTextResponse = dualChecklistResponse(2, 1, 'low', 'Trivial');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
+      expect(scored.ideaScore).toBe(20);
       expect(scored.tier).toBe('low');
     });
 
@@ -669,38 +664,63 @@ describe('ScoringEngine', () => {
     });
   });
 
-  describe('dual scoring — LLM integration', () => {
-    it('returns ideaScore from CheckEval checklist', async () => {
+  describe('dual scoring — idea + implementation', () => {
+    it('returns separate ideaScore and implementationScore', async () => {
       const provider = new MockLLMProvider();
-      // 11 yes → ideaScore = Math.round(11/15 * 100) = 73
-      provider.generateTextResponse = checklistResponse(11, 'low', 'Test');
+      // 7/10 idea → 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
 
-      expect(scored.ideaScore).toBe(73);
+      expect(scored.ideaScore).toBe(70);
+      expect(scored.implementationScore).toBe(80);
       expect(scored.ideaReason).toBe('Test');
-      expect(scored.ideaChecklist).toBeDefined();
-      expect(scored.ideaChecklist).toHaveLength(15);
-      expect(scored.ideaChecklist!.filter(a => a).length).toBe(11);
+      expect(scored.ideaChecklist).toHaveLength(10);
+      expect(scored.implementationChecklist).toHaveLength(5);
+      expect(scored.ideaChecklist!.filter(a => a).length).toBe(7);
+      expect(scored.implementationChecklist!.filter(a => a).length).toBe(4);
       // backward compat
-      expect(scored.llmScore).toBe(73);
+      expect(scored.llmScore).toBe(70);
       expect(scored.llmRisk).toBe('low');
     });
 
-    it('computes totalScore with weighted geometric mean', async () => {
+    it('computes totalScore as 0.7*idea + 0.3*implementation', async () => {
       const provider = new MockLLMProvider();
-      // 11 yes → ideaScore=73
-      provider.generateTextResponse = checklistResponse(11, 'low', 'Test');
+      // 7/10 idea → 70, 4/5 impl → 80
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Test');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
 
-      // Geometric mean: idea^0.65 * readiness^0.35 (floor=5)
-      const safeIdea = Math.max(5, scored.ideaScore!);
-      const safeReadiness = Math.max(5, scored.readinessScore!);
-      const expected = Math.round(Math.pow(safeIdea, 0.65) * Math.pow(safeReadiness, 0.35));
-      expect(scored.totalScore).toBe(expected);
+      // totalScore = round(0.7 * 70 + 0.3 * 80) = round(49 + 24) = 73
+      expect(scored.totalScore).toBe(73);
+    });
+
+    it('high idea + low implementation = idea-driven total', async () => {
+      const provider = new MockLLMProvider();
+      // 8/10 idea → 80, 1/5 impl → 20
+      provider.generateTextResponse = dualChecklistResponse(8, 1, 'medium', 'Great idea, bad code');
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+
+      // totalScore = round(0.7 * 80 + 0.3 * 20) = round(56 + 6) = 62
+      expect(scored.totalScore).toBe(62);
+      expect(scored.ideaScore).toBe(80);
+      expect(scored.implementationScore).toBe(20);
+    });
+
+    it('low idea + high implementation = still low total', async () => {
+      const provider = new MockLLMProvider();
+      // 1/10 idea → 10, 5/5 impl → 100
+      provider.generateTextResponse = dualChecklistResponse(1, 5, 'low', 'Trivial but polished');
+      const engine = new ScoringEngine(provider);
+      const pr = createPRData();
+      const scored = await engine.score(pr);
+
+      // totalScore = round(0.7 * 10 + 0.3 * 100) = round(7 + 30) = 37
+      expect(scored.totalScore).toBe(37);
     });
 
     it('uses readinessScore as totalScore when no provider', async () => {
@@ -710,7 +730,7 @@ describe('ScoringEngine', () => {
 
       expect(scored.totalScore).toBe(scored.readinessScore);
       expect(scored.ideaScore).toBeUndefined();
-      expect(scored.llmScore).toBeUndefined();
+      expect(scored.implementationScore).toBeUndefined();
     });
   });
 
@@ -724,13 +744,11 @@ describe('ScoringEngine', () => {
       ];
       const scored = await engine.scoreMany(prs);
       expect(scored.length).toBe(3);
-      // All should have percentileRank
       for (const s of scored) {
         expect(s.percentileRank).toBeDefined();
         expect(s.percentileRank).toBeGreaterThanOrEqual(0);
         expect(s.percentileRank).toBeLessThanOrEqual(100);
       }
-      // Lowest score should have percentileRank=0, highest=100
       expect(scored[0].percentileRank).toBe(0);
       expect(scored[scored.length - 1].percentileRank).toBe(100);
     });
@@ -746,25 +764,24 @@ describe('ScoringEngine', () => {
   describe('issue context enrichment', () => {
     it('includes issueContext in LLM prompt when available', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = checklistResponse(11, 'low', 'With context');
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'With context');
       const engine = new ScoringEngine(provider);
       const pr = createPRData({
         issueContext: 'Bug: login crashes when password contains special chars',
       });
       const scored = await engine.score(pr);
-      expect(scored.ideaScore).toBe(73);
-      // Verify the prompt contained the issue context
+      expect(scored.ideaScore).toBe(70);
       expect(provider.generateTextCalls.length).toBe(1);
       expect(provider.generateTextCalls[0].prompt).toContain('login crashes when password');
     });
 
     it('works without issueContext', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = checklistResponse(10, 'low', 'No context');
+      provider.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'No context');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
-      expect(scored.ideaScore).toBe(67);
+      expect(scored.ideaScore).toBe(60);
       expect(provider.generateTextCalls[0].prompt).not.toContain('Linked issue:');
     });
   });
@@ -772,7 +789,7 @@ describe('ScoringEngine', () => {
   describe('median-of-N scoring passes', () => {
     it('uses single pass by default', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = checklistResponse(10, 'low', 'Single');
+      provider.generateTextResponse = dualChecklistResponse(6, 3, 'low', 'Single');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       await engine.score(pr);
@@ -784,26 +801,24 @@ describe('ScoringEngine', () => {
       let callCount = 0;
       provider.generateTextResponse = () => {
         callCount++;
-        // Return different scores: 8, 10, 12 yes
-        const yesCount = [8, 12, 10][callCount - 1] ?? 10;
-        return checklistResponse(yesCount, 'low', `Pass ${callCount}`);
+        // Return different idea scores: 5/10=50, 8/10=80, 7/10=70
+        const ideaYes = [5, 8, 7][callCount - 1] ?? 7;
+        return dualChecklistResponse(ideaYes, 4, 'low', `Pass ${callCount}`);
       };
       const engine = new ScoringEngine(provider, false, 5, 3);
       const pr = createPRData();
       const scored = await engine.score(pr);
-      // Should make 3 LLM calls
       expect(provider.generateTextCalls.length).toBe(3);
-      // Median of [53, 67, 80] sorted = 67 (10/15)
-      expect(scored.ideaScore).toBe(67);
+      // Sorted by ideaScore: [50, 70, 80] → median = 70 (7/10)
+      expect(scored.ideaScore).toBe(70);
     });
 
     it('enforces minimum 1 pass', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = checklistResponse(11, 'low', 'Min pass');
+      provider.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Min pass');
       const engine = new ScoringEngine(provider, false, 5, 0);
       const pr = createPRData();
       await engine.score(pr);
-      // Should still make 1 call even with 0 passes
       expect(provider.generateTextCalls.length).toBe(1);
     });
   });

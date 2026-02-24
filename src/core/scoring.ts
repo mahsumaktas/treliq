@@ -48,6 +48,17 @@ const INTENT_PROFILES: Record<IntentCategory, Partial<Record<string, number>>> =
 
 const log = createLogger('scoring');
 
+/** Result from dual CheckEval scoring */
+interface LLMScoringResult {
+  ideaScore: number;
+  implementationScore: number;
+  risk: 'low' | 'medium' | 'high';
+  reason: string;
+  ideaChecklist: boolean[];
+  implementationChecklist: boolean[];
+  checklist: boolean[];  // combined for backward compat
+}
+
 export class ScoringEngine {
   private provider?: LLMProvider;
   private trustContributors: boolean;
@@ -179,19 +190,23 @@ export class ScoringEngine {
     if (isAbandoned) penaltyMultiplier *= 0.3;
     const readinessScore = Math.round(Math.max(0, Math.min(100, topsisScore * penaltyMultiplier)));
 
-    // 7. LLM idea scoring (CheckEval binary checklist)
+    // 7. LLM dual scoring (CheckEval: idea + implementation)
     let ideaScore: number | undefined;
     let ideaReason: string | undefined;
-    let llmRisk: 'low' | 'medium' | 'high' | undefined;
     let ideaChecklist: boolean[] | undefined;
+    let implementationScore: number | undefined;
+    let implementationChecklist: boolean[] | undefined;
+    let llmRisk: 'low' | 'medium' | 'high' | undefined;
 
     if (this.provider) {
       try {
         const llmResult = await this.scoreLLM(pr);
-        ideaScore = llmResult.score;
+        ideaScore = llmResult.ideaScore;
+        implementationScore = llmResult.implementationScore;
         ideaReason = llmResult.reason;
         llmRisk = llmResult.risk;
-        ideaChecklist = llmResult.checklist;
+        ideaChecklist = llmResult.ideaChecklist;
+        implementationChecklist = llmResult.implementationChecklist;
       } catch (err: any) {
         ideaReason = `LLM failed: ${err.message}`;
         log.warn({ pr: pr.number, err }, 'LLM scoring failed');
@@ -200,26 +215,24 @@ export class ScoringEngine {
 
     // 8. Diff analysis bonus (if available)
     const diffAnalysis = this.diffAnalyses.get(pr.number);
-    if (diffAnalysis && ideaScore !== undefined) {
-      ideaScore = Math.round(0.6 * ideaScore + 0.4 * diffAnalysis.codeQuality);
+    if (diffAnalysis && implementationScore !== undefined) {
+      implementationScore = Math.round(0.6 * implementationScore + 0.4 * diffAnalysis.codeQuality);
       if (diffAnalysis.riskAssessment !== 'medium') {
         llmRisk = diffAnalysis.riskAssessment === 'critical' ? 'high' : diffAnalysis.riskAssessment;
       }
     }
 
-    // 9. Combined total score — weighted geometric mean (Triantaphyllou 2001, PMC 729-scenario)
-    // Geometric mean penalizes low readiness more aggressively than additive
+    // 9. Combined total score: idea-heavy weighted average
     let totalScore: number;
-    if (ideaScore !== undefined) {
-      const FLOOR = 5; // prevent zero-veto from completely zeroing out
-      const safeIdea = Math.max(FLOOR, ideaScore);
-      const safeReadiness = Math.max(FLOOR, readinessScore);
-      totalScore = Math.round(Math.pow(safeIdea, 0.65) * Math.pow(safeReadiness, 0.35));
+    if (ideaScore !== undefined && implementationScore !== undefined) {
+      totalScore = Math.round(0.7 * ideaScore + 0.3 * implementationScore);
+    } else if (ideaScore !== undefined) {
+      totalScore = ideaScore;
     } else {
       totalScore = readinessScore; // no LLM = readiness only
     }
 
-    // 10. Tier classification
+    // 10. Tier classification (based on ideaScore)
     const tier = this.assignTier(ideaScore ?? readinessScore, readinessScore);
 
     return {
@@ -239,6 +252,9 @@ export class ScoringEngine {
       ideaScore,
       ideaReason,
       ideaChecklist,
+      implementationScore,
+      implementationReason: ideaReason,
+      implementationChecklist,
       readinessScore,
       penaltyMultiplier,
       tier,
@@ -267,24 +283,24 @@ export class ScoringEngine {
     return (dMinus / (dPlus + dMinus)) * 100;
   }
 
-  /** Assign priority tier based on ideaScore + readinessScore */
-  private assignTier(ideaScore: number, readinessScore: number): 'critical' | 'high' | 'normal' | 'low' {
-    if (ideaScore >= 80 && readinessScore >= 55) return 'critical';
-    if (ideaScore >= 67) return 'high';
-    if (ideaScore >= 40) return 'normal';
+  /** Assign priority tier based primarily on ideaScore */
+  private assignTier(ideaScore: number, _readinessScore: number): 'critical' | 'high' | 'normal' | 'low' {
+    if (ideaScore >= 80) return 'critical';
+    if (ideaScore >= 60) return 'high';
+    if (ideaScore >= 30) return 'normal';
     return 'low';
   }
 
   /**
    * CheckEval — Binary Checklist Decomposition (EMNLP 2025)
-   * 15 yes/no questions instead of single 0-100 score.
-   * ideaScore = (yes_count / 15) * 100
-   * Evidence: inter-evaluator agreement +0.45, Pearson 0.912 vs 0.745 for numeric scales.
+   * Split into two checklists: 10 idea questions + 5 implementation questions.
+   * ideaScore = (idea_yes / 10) * 100
+   * implementationScore = (impl_yes / 5) * 100
    *
    * Multi-pass self-consistency (Wang et al. 2023): when scoringPasses > 1,
    * runs N times with varied temperature and takes median by yesCount.
    */
-  private async scoreLLM(pr: PRData): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string; checklist?: boolean[] }> {
+  private async scoreLLM(pr: PRData): Promise<LLMScoringResult> {
     if (this.scoringPasses <= 1) {
       return this.scoreLLMSingle(pr, 0.1);
     }
@@ -293,81 +309,101 @@ export class ScoringEngine {
     const results = await Promise.all(
       Array.from({ length: this.scoringPasses }, () => this.scoreLLMSingle(pr, 0.4))
     );
-    results.sort((a, b) => a.score - b.score);
+    results.sort((a, b) => a.ideaScore - b.ideaScore);
     return results[Math.floor(results.length / 2)];
   }
 
-  private async scoreLLMSingle(pr: PRData, temperature: number): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string; checklist?: boolean[] }> {
+  private async scoreLLMSingle(pr: PRData, temperature: number): Promise<LLMScoringResult> {
     const filesStr = pr.changedFiles.slice(0, 30).join(', ');
     const input = `Title: ${pr.title}\nBody: ${(pr.body ?? '').slice(0, 2000)}\nFiles: ${filesStr}`.slice(0, 4000);
     const issueCtx = pr.issueContext ? `\nLinked issue:\n${pr.issueContext.slice(0, 1000)}\n` : '';
 
-    const prompt = `Evaluate the IDEA VALUE of this PR by answering each question with true or false.
-Score the IDEA and the problem it solves, NOT the PR quality or polish.
+    const prompt = `Evaluate this PR on two dimensions by answering each question true or false.
+
+PART A — IDEA VALUE: How valuable is the PROBLEM this PR identifies and the APPROACH it proposes?
+Score the idea, not the code. A brilliant idea with terrible code still has high idea value.
 
 IMPORTANT:
 - Diff size does NOT determine value. A 4-line fix preventing crashes is MORE valuable than a 500-line cosmetic refactor.
-- Do NOT trust the PR title at face value. A PR titled "feat(security)" that only adds unintegrated utility functions has less value than a simple null-check that prevents real crashes.
-- Code that is NOT wired into the running system yet (standalone utilities, helpers not called anywhere) has potential but NOT immediate value — answer Q10, Q11, Q14 as false for unintegrated code.
-- Config/default changes that affect ALL installations or users count as broad impact for Q7.
-- Community contributions (new plugins, skills, integrations, documentation for ecosystem) have value — answer Q5 as true.
-- Security vulnerability fixes (prototype pollution, injection, auth bypass) protect ALL users even if unexploited — they deserve high scores.
+- Security vulnerability fixes (prototype pollution, injection, auth bypass) protect ALL users even if unexploited — high idea value.
+- "Silent" problems (memory leaks, credential exposure, data corruption) that cause harm without obvious symptoms are especially valuable to identify.
+- Config/default changes that affect ALL installations count as broad impact.
+- Community contributions (plugins, skills, integrations, ecosystem docs) have value.
 - Documentation that only promotes the author's own unrelated external project is self-promotion, not a contribution.
 
-Questions:
-1. Does this fix a bug that users have reported or would encounter in normal usage?
-2. Does this address a security vulnerability, hardening need, or defense-in-depth concern (timing attack, injection, auth bypass, access control, secret exposure, path traversal, XSS, or similar)?
-3. Does this fix a crash, service failure, or error scenario (null/undefined errors, uncaught exceptions, blank screens, broken workflows, unhandled edge cases)?
-4. Does this solve a performance problem (latency, memory, CPU, resource leaks)?
-5. Does this add a meaningful new capability, configuration option, integration, or community contribution?
-6. Does this improve developer experience (DX, tooling, debugging, deployment)?
-7. Does the problem affect multiple users, environments, or use cases (broad impact)?
-8. Is the technical approach sound and well-reasoned for the problem at hand?
-9. Does this remove meaningful technical debt or improve maintainability?
-10. Would leaving this unfixed cause real harm, breakage, or security risk?
-11. Would you want this change in your own production codebase?
-12. Does this address a documented issue, known pain point, or recurring problem?
-13. Does the approach align with the project's architecture and conventions?
-14. Does this prevent a failure mode that could affect production stability or data integrity?
-15. Is the problem important for the project's long-term health and reliability?
+Idea Questions:
+I1. Does this identify a real problem that users or developers actually encounter?
+I2. Does this address a security vulnerability, hardening need, or defense-in-depth concern?
+I3. Does this address a crash, data loss, or service outage scenario?
+I4. Does this solve a performance, reliability, or resource efficiency problem?
+I5. Does this propose a meaningful new capability, configuration option, or integration?
+I6. Does the identified problem affect a broad base of users or installations?
+I7. Is this a "silent" problem — causing harm without obvious symptoms until too late?
+I8. Is the proposed approach/solution technically sound for the problem?
+I9. Does this represent a non-obvious insight or valuable problem identification?
+I10. Would you want this problem fixed in your codebase, regardless of who writes the fix?
 
-Calibration anchors:
-- Security fix adding timingSafeEqual to prevent timing attacks (3 lines changed): [true,true,false,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
-- Fix for null/undefined crash in UI filter affecting all users (8 lines): [true,false,true,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
-- Standalone utility functions not wired into any running code yet ("feat(security)" label but no integration): [false,false,false,false,true,false,false,true,false,false,false,false,true,false,false] = 3/15
-- Typo fix in README: [false,false,false,false,false,false,false,true,false,false,false,false,true,false,false] = 2/15
-- Spam/empty PR with no real changes: [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] = 0/15
-- Config default changes affecting all users (token optimization, memory settings): [false,false,false,true,false,false,true,true,false,false,true,false,true,false,true] = 6/15
-- Community plugin documentation (new ecosystem skill/plugin page): [false,false,false,false,true,false,false,true,false,false,false,false,true,false,true] = 4/15
-- Security config option for network access control (e.g., strictLoopback): [false,true,false,false,true,false,true,true,false,true,true,false,true,false,true] = 8/15
-- Proactive security hardening (TLS warnings, auth validation, defense-in-depth): [false,true,false,false,false,false,true,true,false,true,true,true,true,true,true] = 9/15
-- Critical security vulnerability fix blocking prototype pollution / injection in template resolver: [false,true,false,false,false,false,true,true,true,true,true,true,true,true,true] = 10/15
-- Crash prevention: catching unhandled I/O write failures that crash the gateway process: [true,false,true,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
-- Self-promotional documentation page for author's own unrelated external npm package (not integrated with the project): [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] = 0/15
-- Small focused UX fix: removing stale UI reaction emoji after bot reply in Slack (real reproducible bug, clean fix): [true,false,false,false,false,false,false,true,false,false,true,true,true,false,true] = 6/15
+PART B — IMPLEMENTATION QUALITY: How well is this PR actually implemented?
+Score the code, not the idea. Good code for a bad idea still has high implementation quality.
 
-Return JSON: {"answers": [true/false for each of the 15 questions], "risk": "low"|"medium"|"high", "reason": "<1 sentence>"}
+Implementation Questions:
+M1. Is the code integrated into the running system (not standalone/dead code)?
+M2. Does the implementation correctly and completely solve the identified problem?
+M3. Are there meaningful tests that verify the fix works?
+M4. Is the code clean, handling edge cases, without introducing new issues?
+M5. Could this be merged as-is without requiring significant rework?
+
+Calibration anchors (idea / implementation):
+- Security fix timingSafeEqual (3 lines, integrated): idea=[t,t,f,f,f,t,t,t,t,t]=7/10, impl=[t,t,t,t,t]=5/5
+- Null crash fix in UI filter (8 lines, integrated): idea=[t,f,t,f,f,t,f,t,f,t]=5/10, impl=[t,t,t,t,t]=5/5
+- 3 standalone safety utilities NOT wired in (transcript purge, tool budget, token reuse): idea=[t,t,f,f,t,t,t,t,t,t]=8/10, impl=[f,f,t,t,f]=2/5
+- Typo fix in README: idea=[f,f,f,f,f,f,f,f,f,f]=0/10, impl=[t,t,f,t,t]=4/5
+- Spam/empty PR: idea=[f,f,f,f,f,f,f,f,f,f]=0/10, impl=[f,f,f,f,f]=0/5
+- Config defaults affecting all users: idea=[t,f,f,t,t,t,f,t,f,t]=6/10, impl=[t,t,f,t,t]=4/5
+- Community plugin docs (ecosystem page): idea=[f,f,f,f,t,f,f,f,f,f]=1/10, impl=[t,t,f,t,t]=4/5
+- Self-promotional docs (author's own unrelated package): idea=[f,f,f,f,f,f,f,f,f,f]=0/10, impl=[f,f,f,f,f]=0/5
+- Proactive security hardening (TLS, auth, defense-in-depth): idea=[t,t,f,f,f,t,t,t,t,t]=7/10, impl=[t,t,t,t,t]=5/5
+- Critical prototype pollution fix: idea=[t,t,f,f,f,t,t,t,t,t]=7/10, impl=[t,t,t,t,t]=5/5
+- Crash prevention (catching unhandled I/O failures): idea=[t,f,t,f,f,t,t,t,f,t]=6/10, impl=[t,t,t,t,t]=5/5
+- Small UX fix (Slack reaction emoji, real bug): idea=[t,f,f,f,f,f,f,t,f,t]=3/10, impl=[t,t,f,t,t]=4/5
+
+Return JSON: {"idea": [true/false x10], "implementation": [true/false x5], "risk": "low"|"medium"|"high", "reason": "<1 sentence: what problem does this identify?>"}
 ${issueCtx}
 ${input}`;
 
-    const text = await this.provider!.generateText(prompt, { temperature, maxTokens: 300 });
+    const text = await this.provider!.generateText(prompt, { temperature, maxTokens: 400 });
 
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('No JSON found in LLM response');
     try {
       const parsed = JSON.parse(match[0]);
-      const answers: boolean[] = Array.isArray(parsed.answers)
-        ? parsed.answers.slice(0, 15).map((a: unknown) => Boolean(a))
+
+      // Parse idea answers (10 questions)
+      const ideaAnswers: boolean[] = Array.isArray(parsed.idea)
+        ? parsed.idea.slice(0, 10).map((a: unknown) => Boolean(a))
         : [];
-      // Pad to 15 if LLM returned fewer
-      while (answers.length < 15) answers.push(false);
-      const yesCount = answers.filter(a => a).length;
-      const score = Math.round((yesCount / 15) * 100);
+      while (ideaAnswers.length < 10) ideaAnswers.push(false);
+
+      // Parse implementation answers (5 questions)
+      const implAnswers: boolean[] = Array.isArray(parsed.implementation)
+        ? parsed.implementation.slice(0, 5).map((a: unknown) => Boolean(a))
+        : [];
+      while (implAnswers.length < 5) implAnswers.push(false);
+
+      // Backward compat: combined checklist
+      const combinedChecklist = [...ideaAnswers, ...implAnswers];
+
+      const ideaYes = ideaAnswers.filter(a => a).length;
+      const implYes = implAnswers.filter(a => a).length;
+
       return {
-        score,
+        ideaScore: Math.round((ideaYes / 10) * 100),
+        implementationScore: Math.round((implYes / 5) * 100),
         risk: ['low', 'medium', 'high'].includes(parsed.risk) ? parsed.risk : 'medium',
         reason: String(parsed.reason ?? ''),
-        checklist: answers,
+        ideaChecklist: ideaAnswers,
+        implementationChecklist: implAnswers,
+        checklist: combinedChecklist,
       };
     } catch (parseErr: any) {
       throw new Error(`JSON parse failed: ${parseErr.message}`);

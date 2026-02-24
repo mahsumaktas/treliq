@@ -85,9 +85,15 @@ export interface ScoredPR extends PRData {
   ideaScore?: number;
   /** Why this score for idea value */
   ideaReason?: string;
-  /** Binary checklist answers from CheckEval (15 yes/no questions) */
+  /** Binary checklist answers from CheckEval idea questions */
   ideaChecklist?: boolean[];
-  /** Merge-readiness score (0-100) — how ready is this PR? */
+  /** Implementation quality score (0-100) — how well is the code implemented? */
+  implementationScore?: number;
+  /** Why this score for implementation */
+  implementationReason?: string;
+  /** Binary checklist answers from CheckEval implementation questions */
+  implementationChecklist?: boolean[];
+  /** Merge-readiness score (0-100) — heuristic signals via TOPSIS */
   readinessScore?: number;
   /** Hard penalty multiplier applied to readiness */
   penaltyMultiplier?: number;

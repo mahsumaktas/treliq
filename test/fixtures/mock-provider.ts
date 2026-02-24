@@ -5,14 +5,28 @@
 import type { LLMProvider } from '../../src/core/provider';
 
 /**
- * Helper to create a CheckEval-format JSON response for mock LLM.
- * ideaScore = Math.round((yesCount / 15) * 100)
+ * Helper to create a dual CheckEval response (idea + implementation).
+ * ideaScore = Math.round((ideaYes / 10) * 100)
+ * implementationScore = Math.round((implYes / 5) * 100)
  *
- * Score mapping: 0→0, 3→20, 5→33, 7→47, 8→53, 9→60, 10→67, 11→73, 12→80, 13→87, 14→93, 15→100
+ * Idea score mapping: 0→0, 1→10, 2→20, 3→30, 4→40, 5→50, 6→60, 7→70, 8→80, 9→90, 10→100
+ * Impl score mapping: 0→0, 1→20, 2→40, 3→60, 4→80, 5→100
+ */
+export function dualChecklistResponse(ideaYes: number, implYes: number, risk = 'low', reason = 'Test'): string {
+  const idea = Array.from({ length: 10 }, (_, i) => i < ideaYes);
+  const implementation = Array.from({ length: 5 }, (_, i) => i < implYes);
+  return JSON.stringify({ idea, implementation, risk, reason });
+}
+
+/**
+ * @deprecated Use dualChecklistResponse instead. Kept for backward compat during migration.
+ * Creates a legacy 15-question response (first 10 = idea, last 5 = impl).
  */
 export function checklistResponse(yesCount: number, risk = 'low', reason = 'Test'): string {
-  const answers = Array.from({ length: 15 }, (_, i) => i < yesCount);
-  return JSON.stringify({ answers, risk, reason });
+  // Map old 15-question count to new dual format: split proportionally
+  const ideaYes = Math.min(10, Math.round(yesCount * (10 / 15)));
+  const implYes = Math.min(5, yesCount - ideaYes);
+  return dualChecklistResponse(ideaYes, implYes, risk, reason);
 }
 
 export class MockLLMProvider implements LLMProvider {
@@ -20,7 +34,7 @@ export class MockLLMProvider implements LLMProvider {
 
   // Configurable responses
   generateTextResponse: string | ((prompt: string) => string | Promise<string>) =
-    checklistResponse(11, 'low', 'Mock LLM response');
+    dualChecklistResponse(7, 4, 'low', 'Mock LLM response');
   generateEmbeddingResponse: number[] | ((text: string) => number[] | Promise<number[]>) =
     Array(768).fill(0).map((_, i) => Math.sin(i * 0.1) * 0.1);
 
@@ -69,7 +83,7 @@ export class MockLLMProvider implements LLMProvider {
     this.generateTextCalls = [];
     this.generateEmbeddingCalls = [];
     this.generateEmbeddingBatchCalls = [];
-    this.generateTextResponse = checklistResponse(11, 'low', 'Mock LLM response');
+    this.generateTextResponse = dualChecklistResponse(7, 4, 'low', 'Mock LLM response');
     this.generateEmbeddingResponse = Array(768).fill(0).map((_, i) => Math.sin(i * 0.1) * 0.1);
     this.generateEmbeddingBatchResponse = null;
   }
