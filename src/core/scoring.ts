@@ -286,8 +286,11 @@ export class ScoringEngine {
     const prompt = `Evaluate the IDEA VALUE of this PR by answering each question with true or false.
 Score the IDEA and the problem it solves, NOT the PR quality or polish.
 
-IMPORTANT: Diff size does NOT determine value. A 4-line fix preventing crashes for all users
-is MORE valuable than a 500-line cosmetic refactor. Judge the PROBLEM being solved.
+IMPORTANT:
+- Diff size does NOT determine value. A 4-line fix preventing crashes is MORE valuable than a 500-line cosmetic refactor.
+- Do NOT trust the PR title at face value. A PR titled "feat(security)" that only adds unintegrated utility functions has less value than a simple null-check that prevents real crashes.
+- Code that is NOT wired into the running system yet (standalone utilities, helpers not called anywhere) has potential but NOT immediate value — answer Q10, Q11, Q14 as false for unintegrated code.
+- Config/default changes that affect ALL installations or users count as broad impact for Q7.
 
 Questions:
 1. Does this fix a bug that users have reported or would encounter in normal usage?
@@ -309,9 +312,10 @@ Questions:
 Calibration anchors:
 - Security fix adding timingSafeEqual to prevent timing attacks (3 lines changed): [true,true,false,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
 - Fix for null/undefined crash in UI filter affecting all users (8 lines): [true,false,true,false,false,false,true,true,false,true,true,true,true,true,true] = 10/15
+- Standalone utility functions not wired into any running code yet ("feat(security)" label but no integration): [false,false,false,false,true,false,false,true,false,false,false,false,true,false,false] = 3/15
 - Typo fix in README: [false,false,false,false,false,false,false,true,false,false,false,false,true,false,false] = 2/15
 - Spam/empty PR with no real changes: [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] = 0/15
-- New API endpoint for user dashboard: [false,false,false,false,true,true,true,true,false,false,true,true,true,false,true] = 8/15
+- Config default changes affecting all users (token optimization, memory settings): [false,false,false,true,false,false,true,true,false,false,true,false,true,false,true] = 6/15
 
 Return JSON: {"answers": [true/false for each of the 15 questions], "risk": "low"|"medium"|"high", "reason": "<1 sentence>"}
 
