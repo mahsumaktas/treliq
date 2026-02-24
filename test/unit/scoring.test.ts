@@ -4,7 +4,7 @@
 
 import { ScoringEngine } from '../../src/core/scoring';
 import { createPRData } from '../fixtures/pr-factory';
-import { MockLLMProvider } from '../fixtures/mock-provider';
+import { MockLLMProvider, checklistResponse } from '../fixtures/mock-provider';
 
 describe('ScoringEngine', () => {
   describe('ci_status signal', () => {
@@ -608,7 +608,8 @@ describe('ScoringEngine', () => {
   describe('tier classification', () => {
     it('assigns critical when ideaScore>=80 and readiness>=60', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 85, "risk": "low", "reason": "Critical fix"}';
+      // 13 yes → ideaScore=87
+      provider.generateTextResponse = checklistResponse(13, 'low', 'Critical fix');
       const engine = new ScoringEngine(provider);
       const pr = createPRData(); // good defaults = high readiness
       const scored = await engine.score(pr);
@@ -618,7 +619,8 @@ describe('ScoringEngine', () => {
 
     it('assigns high when ideaScore>=70 but readiness<60', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Good idea"}';
+      // 11 yes → ideaScore=73
+      provider.generateTextResponse = checklistResponse(11, 'low', 'Good idea');
       const engine = new ScoringEngine(provider);
       // Draft PR = low readiness due to 0.4x penalty
       const pr = createPRData({ isDraft: true });
@@ -629,7 +631,8 @@ describe('ScoringEngine', () => {
 
     it('assigns normal when ideaScore 45-69', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 55, "risk": "low", "reason": "Routine fix"}';
+      // 8 yes → ideaScore=53
+      provider.generateTextResponse = checklistResponse(8, 'low', 'Routine fix');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -638,7 +641,8 @@ describe('ScoringEngine', () => {
 
     it('assigns low when ideaScore<45', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 20, "risk": "low", "reason": "Trivial"}';
+      // 3 yes → ideaScore=20
+      provider.generateTextResponse = checklistResponse(3, 'low', 'Trivial');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
@@ -655,28 +659,36 @@ describe('ScoringEngine', () => {
   });
 
   describe('dual scoring — LLM integration', () => {
-    it('returns ideaScore from LLM', async () => {
+    it('returns ideaScore from CheckEval checklist', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 75, "risk": "low", "reason": "Test"}';
+      // 11 yes → ideaScore = Math.round(11/15 * 100) = 73
+      provider.generateTextResponse = checklistResponse(11, 'low', 'Test');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
 
-      expect(scored.ideaScore).toBe(75);
+      expect(scored.ideaScore).toBe(73);
       expect(scored.ideaReason).toBe('Test');
+      expect(scored.ideaChecklist).toBeDefined();
+      expect(scored.ideaChecklist).toHaveLength(15);
+      expect(scored.ideaChecklist!.filter(a => a).length).toBe(11);
       // backward compat
-      expect(scored.llmScore).toBe(75);
+      expect(scored.llmScore).toBe(73);
       expect(scored.llmRisk).toBe('low');
     });
 
-    it('computes totalScore = 0.7 * ideaScore + 0.3 * readinessScore', async () => {
+    it('computes totalScore with weighted geometric mean', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 75, "risk": "low", "reason": "Test"}';
+      // 11 yes → ideaScore=73
+      provider.generateTextResponse = checklistResponse(11, 'low', 'Test');
       const engine = new ScoringEngine(provider);
       const pr = createPRData();
       const scored = await engine.score(pr);
 
-      const expected = Math.round(0.7 * scored.ideaScore! + 0.3 * scored.readinessScore!);
+      // Geometric mean: idea^0.65 * readiness^0.35 (floor=5)
+      const safeIdea = Math.max(5, scored.ideaScore!);
+      const safeReadiness = Math.max(5, scored.readinessScore!);
+      const expected = Math.round(Math.pow(safeIdea, 0.65) * Math.pow(safeReadiness, 0.35));
       expect(scored.totalScore).toBe(expected);
     });
 

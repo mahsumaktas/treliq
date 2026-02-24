@@ -4,7 +4,7 @@
 
 import { ScoringEngine } from '../../src/core/scoring';
 import { createPRData } from '../fixtures/pr-factory';
-import { MockLLMProvider } from '../fixtures/mock-provider';
+import { MockLLMProvider, checklistResponse } from '../fixtures/mock-provider';
 
 describe('ScoringEngine', () => {
   describe('Heuristic-only scoring (no LLM)', () => {
@@ -51,7 +51,8 @@ describe('ScoringEngine', () => {
   describe('LLM blend scoring', () => {
     it('should blend heuristic and LLM scores', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 75, "risk": "low", "reason": "Good implementation"}';
+      // 11 yes → ideaScore=73
+      provider.generateTextResponse = checklistResponse(11, 'low', 'Good implementation');
 
       const engine = new ScoringEngine(provider);
       const pr = createPRData({
@@ -64,22 +65,23 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      expect(scored.llmScore).toBe(75);
+      expect(scored.llmScore).toBe(73);
       expect(scored.llmRisk).toBe('low');
       expect(scored.llmReason).toBe('Good implementation');
 
-      // totalScore = 0.4 * heuristic + 0.6 * 75
+      // totalScore = geometric mean of ideaScore and readinessScore
       expect(scored.totalScore).toBeGreaterThan(0);
       expect(scored.totalScore).toBeLessThanOrEqual(100);
 
-      // Verify provider was called
+      // Verify provider was called with checklist prompt
       expect(provider.generateTextCalls.length).toBe(1);
       expect(provider.generateTextCalls[0].prompt).toContain('feat: add authentication');
     });
 
-    it('should use dual scoring formula: 0.7 * ideaScore + 0.3 * readinessScore', async () => {
+    it('should use weighted geometric mean formula', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Test"}';
+      // 12 yes → ideaScore=80
+      provider.generateTextResponse = checklistResponse(12, 'low', 'Test');
 
       const engine = new ScoringEngine(provider);
 
@@ -96,8 +98,10 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      // v0.8: totalScore = 0.7 * ideaScore + 0.3 * readinessScore
-      const expected = Math.round(0.7 * scored.ideaScore! + 0.3 * scored.readinessScore!);
+      // v0.8: totalScore = idea^0.65 * readiness^0.35 (geometric mean)
+      const safeIdea = Math.max(5, scored.ideaScore!);
+      const safeReadiness = Math.max(5, scored.readinessScore!);
+      const expected = Math.round(Math.pow(safeIdea, 0.65) * Math.pow(safeReadiness, 0.35));
 
       expect(scored.ideaScore).toBe(80);
       expect(scored.llmScore).toBe(80); // backward compat
@@ -108,21 +112,21 @@ describe('ScoringEngine', () => {
       const provider = new MockLLMProvider();
 
       // Test low risk
-      provider.generateTextResponse = '{"score": 90, "risk": "low", "reason": "Safe change"}';
+      provider.generateTextResponse = checklistResponse(14, 'low', 'Safe change');
       let engine = new ScoringEngine(provider);
       let scored = await engine.score(createPRData());
       expect(scored.llmRisk).toBe('low');
 
       // Test medium risk
       provider.reset();
-      provider.generateTextResponse = '{"score": 60, "risk": "medium", "reason": "Some concerns"}';
+      provider.generateTextResponse = checklistResponse(9, 'medium', 'Some concerns');
       engine = new ScoringEngine(provider);
       scored = await engine.score(createPRData());
       expect(scored.llmRisk).toBe('medium');
 
       // Test high risk
       provider.reset();
-      provider.generateTextResponse = '{"score": 30, "risk": "high", "reason": "Breaking changes"}';
+      provider.generateTextResponse = checklistResponse(5, 'high', 'Breaking changes');
       engine = new ScoringEngine(provider);
       scored = await engine.score(createPRData());
       expect(scored.llmRisk).toBe('high');
@@ -159,7 +163,8 @@ describe('ScoringEngine', () => {
 
     it('should process PRs with LLM provider', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 75, "risk": "low", "reason": "Good"}';
+      // 11 yes → ideaScore=73
+      provider.generateTextResponse = checklistResponse(11, 'low', 'Good');
 
       const engine = new ScoringEngine(provider);
       const prs = [
@@ -170,8 +175,8 @@ describe('ScoringEngine', () => {
       const results = await engine.scoreMany(prs);
 
       expect(results).toHaveLength(2);
-      expect(results[0].llmScore).toBe(75);
-      expect(results[1].llmScore).toBe(75);
+      expect(results[0].llmScore).toBe(73); // 11/15 * 100
+      expect(results[1].llmScore).toBe(73);
       expect(provider.generateTextCalls.length).toBe(2);
     });
   });
@@ -390,7 +395,8 @@ describe('ScoringEngine', () => {
   describe('Diff-enriched scoring blend', () => {
     it('blends ideaScore with diff codeQuality when diff analysis available', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Good PR"}';
+      // 12 yes → base ideaScore=80
+      provider.generateTextResponse = checklistResponse(12, 'low', 'Good PR');
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -405,19 +411,21 @@ describe('ScoringEngine', () => {
       const pr = createPRData({ number: 1, title: 'fix: improve error handling' });
       const scored = await engine.score(pr);
 
-      // v0.8: ideaScore = 0.6 * LLM + 0.4 * diffQuality = 0.6 * 80 + 0.4 * 90 = 84
+      // v0.8: ideaScore = 0.6 * checklist + 0.4 * diffQuality = 0.6 * 80 + 0.4 * 90 = 84
       expect(scored.diffAnalysis).toBeDefined();
       expect(scored.diffAnalysis!.codeQuality).toBe(90);
       expect(scored.ideaScore).toBe(Math.round(0.6 * 80 + 0.4 * 90));
 
-      // totalScore = 0.7 * ideaScore + 0.3 * readinessScore
-      const expected = Math.round(0.7 * scored.ideaScore! + 0.3 * scored.readinessScore!);
+      // totalScore = geometric mean: idea^0.65 * readiness^0.35
+      const safeIdea = Math.max(5, scored.ideaScore!);
+      const safeReadiness = Math.max(5, scored.readinessScore!);
+      const expected = Math.round(Math.pow(safeIdea, 0.65) * Math.pow(safeReadiness, 0.35));
       expect(scored.totalScore).toBe(expected);
     });
 
     it('overrides llmRisk from diff riskAssessment', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+      provider.generateTextResponse = checklistResponse(12, 'low', 'ok');
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -437,7 +445,7 @@ describe('ScoringEngine', () => {
 
     it('does not override risk when diff says medium', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+      provider.generateTextResponse = checklistResponse(12, 'low', 'ok');
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {
@@ -457,7 +465,7 @@ describe('ScoringEngine', () => {
 
     it('maps critical diff risk to high llmRisk', async () => {
       const provider = new MockLLMProvider();
-      provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "ok"}';
+      provider.generateTextResponse = checklistResponse(12, 'low', 'ok');
 
       const engine = new ScoringEngine(provider);
       engine.setDiffAnalysis(1, {

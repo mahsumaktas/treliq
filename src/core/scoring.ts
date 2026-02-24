@@ -177,10 +177,11 @@ export class ScoringEngine {
     if (isAbandoned) penaltyMultiplier *= 0.3;
     const readinessScore = Math.round(Math.max(0, Math.min(100, topsisScore * penaltyMultiplier)));
 
-    // 7. LLM idea scoring
+    // 7. LLM idea scoring (CheckEval binary checklist)
     let ideaScore: number | undefined;
     let ideaReason: string | undefined;
     let llmRisk: 'low' | 'medium' | 'high' | undefined;
+    let ideaChecklist: boolean[] | undefined;
 
     if (this.provider) {
       try {
@@ -188,6 +189,7 @@ export class ScoringEngine {
         ideaScore = llmResult.score;
         ideaReason = llmResult.reason;
         llmRisk = llmResult.risk;
+        ideaChecklist = llmResult.checklist;
       } catch (err: any) {
         ideaReason = `LLM failed: ${err.message}`;
         log.warn({ pr: pr.number, err }, 'LLM scoring failed');
@@ -203,10 +205,14 @@ export class ScoringEngine {
       }
     }
 
-    // 9. Combined total score
+    // 9. Combined total score — weighted geometric mean (Triantaphyllou 2001, PMC 729-scenario)
+    // Geometric mean penalizes low readiness more aggressively than additive
     let totalScore: number;
     if (ideaScore !== undefined) {
-      totalScore = Math.round(0.7 * ideaScore + 0.3 * readinessScore);
+      const FLOOR = 5; // prevent zero-veto from completely zeroing out
+      const safeIdea = Math.max(FLOOR, ideaScore);
+      const safeReadiness = Math.max(FLOOR, readinessScore);
+      totalScore = Math.round(Math.pow(safeIdea, 0.65) * Math.pow(safeReadiness, 0.35));
     } else {
       totalScore = readinessScore; // no LLM = readiness only
     }
@@ -230,6 +236,7 @@ export class ScoringEngine {
       // v0.8 dual scoring
       ideaScore,
       ideaReason,
+      ideaChecklist,
       readinessScore,
       penaltyMultiplier,
       tier,
@@ -266,42 +273,65 @@ export class ScoringEngine {
     return 'low';
   }
 
-  private async scoreLLM(pr: PRData): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string }> {
+  /**
+   * CheckEval — Binary Checklist Decomposition (EMNLP 2025)
+   * 15 yes/no questions instead of single 0-100 score.
+   * ideaScore = (yes_count / 15) * 100
+   * Evidence: inter-evaluator agreement +0.45, Pearson 0.912 vs 0.745 for numeric scales.
+   */
+  private async scoreLLM(pr: PRData): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string; checklist?: boolean[] }> {
     const filesStr = pr.changedFiles.slice(0, 30).join(', ');
     const input = `Title: ${pr.title}\nBody: ${(pr.body ?? '').slice(0, 2000)}\nFiles: ${filesStr}`.slice(0, 4000);
 
-    const prompt = `Evaluate the IDEA VALUE of this PR — how valuable is the problem it solves and the approach it takes? Score the IDEA, not the PR quality.
+    const prompt = `Evaluate the IDEA VALUE of this PR by answering each question with true or false.
+Score the IDEA and the problem it solves, NOT the PR quality or polish.
 
-A brilliant fix with poor tests still has high idea value.
-A polished PR fixing a typo has low idea value.
+Questions:
+1. Does this fix a bug that users have reported or would encounter?
+2. Does this address a security vulnerability?
+3. Does this fix a crash, data loss, or data corruption scenario?
+4. Does this solve a performance problem?
+5. Does this add a new user-facing capability?
+6. Does this improve developer experience (DX, tooling, workflow)?
+7. Does the problem affect multiple users or use cases (broad impact)?
+8. Is the technical approach sound and well-reasoned?
+9. Does this remove meaningful technical debt?
+10. Is this a novel/non-obvious solution (not just a trivial fix)?
+11. Would you want this change in your own codebase?
+12. Does this address a documented issue or known pain point?
+13. Does the approach align with the project's architecture?
+14. Could this benefit other projects beyond the immediate scope?
+15. Is the problem important for the project's long-term health?
 
-Rubric (use the FULL range):
-  90-100: Critical fix for a real production problem (security, data loss, crash)
-  75-89: Valuable improvement solving a genuine pain point
-  50-74: Useful but routine fix or minor enhancement
-  25-49: Low-value change (cosmetic, trivial, or unnecessary)
-  0-24: No practical value (spam, duplicate, or harmful)
+Calibration anchors:
+- Security fix patching CVE in auth module: [true,true,true,false,false,false,true,true,true,true,true,true,true,false,true] = 11/15
+- Typo fix in README: [false,false,false,false,false,false,false,true,false,false,false,false,true,false,false] = 2/15
+- New API endpoint for user dashboard: [false,false,false,false,true,true,true,true,false,true,true,true,true,true,true] = 10/15
+- Spam/empty PR with no real changes: [false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] = 0/15
+- Routine dependency bump: [false,false,false,false,false,false,false,true,false,false,true,false,true,false,true] = 4/15
 
-Consider:
-- Does this solve a REAL problem users/developers face?
-- Is the approach/idea sound (even if implementation is rough)?
-- Would YOU want this change in your codebase?
-- Is this a novel insight or a copy of an obvious pattern?
-
-Return JSON: {"score": <0-100>, "risk": "low"|"medium"|"high", "reason": "<1 sentence: what makes this valuable or not>"}
+Return JSON: {"answers": [true/false for each of the 15 questions], "risk": "low"|"medium"|"high", "reason": "<1 sentence>"}
 
 ${input}`;
 
-    const text = await this.provider!.generateText(prompt, { temperature: 0.1, maxTokens: 200 });
+    const text = await this.provider!.generateText(prompt, { temperature: 0.1, maxTokens: 300 });
 
-    const match = text.match(/\{[^}]+\}/);
+    const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('No JSON found in LLM response');
     try {
       const parsed = JSON.parse(match[0]);
+      const answers: boolean[] = Array.isArray(parsed.answers)
+        ? parsed.answers.slice(0, 15).map((a: unknown) => Boolean(a))
+        : [];
+      // Pad to 15 if LLM returned fewer
+      while (answers.length < 15) answers.push(false);
+      const yesCount = answers.filter(a => a).length;
+      const score = Math.round((yesCount / 15) * 100);
       return {
-        score: Math.max(0, Math.min(100, Number(parsed.score) || 50)),
+        score,
         risk: ['low', 'medium', 'high'].includes(parsed.risk) ? parsed.risk : 'medium',
         reason: String(parsed.reason ?? ''),
+        checklist: answers,
       };
     } catch (parseErr: any) {
       throw new Error(`JSON parse failed: ${parseErr.message}`);

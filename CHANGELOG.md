@@ -8,8 +8,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 
 ### Changed
 - **Scoring v2: Dual scoring system** — `ideaScore` (fikir degeri, LLM-driven) ve `readinessScore` (merge hazirlik, TOPSIS-based) olarak ayristi
-- Scoring formula: `totalScore = 0.7 * ideaScore + 0.3 * readinessScore`
-- LLM prompt completely redesigned for idea value assessment with calibrated rubric
+- **CheckEval binary checklist** replaces single numeric LLM scoring (evidence: CheckEval EMNLP 2025, "Rubric Is All You Need" ACM ICER 2025). 15 yes/no questions for idea value — mechanically eliminates score compression.
+- **Weighted geometric mean** replaces additive formula for totalScore (evidence: Triantaphyllou 2001, PMC 729-scenario simulation). `totalScore = ideaScore^0.65 * readinessScore^0.35` with floor=5 for zero-veto protection.
+- **Few-shot calibration anchors** in LLM prompt (evidence: Zhao et al. ICML 2021). 5 reference examples spanning full score range break central tendency bias.
 - TOPSIS replaces weighted average for readiness scoring (evidence: MCDM literature)
 - Neutral/missing signal values now score 0 instead of 30-50
 - Contributor signal weight reduced 0.12 → 0.04 (AI agents can produce excellent PRs)
@@ -19,7 +20,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Hard penalty multipliers for CI failure (0.4x), merge conflict (0.5x), spam (0.2x), draft (0.4x), abandoned (0.3x)
 - Tier classification: critical/high/normal/low based on ideaScore + readinessScore
 - Percentile rank normalization in batch scoring
-- `ideaScore`, `ideaReason`, `readinessScore`, `penaltyMultiplier`, `tier`, `percentileRank` fields on ScoredPR
+- `ideaScore`, `ideaReason`, `ideaChecklist`, `readinessScore`, `penaltyMultiplier`, `tier`, `percentileRank` fields on ScoredPR
 
 ## [0.7.0] - 2026-02-22
 
