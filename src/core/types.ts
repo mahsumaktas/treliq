@@ -68,7 +68,7 @@ export interface ScoredPR extends PRData {
   visionAlignment?: 'aligned' | 'tangential' | 'off-roadmap' | 'unchecked';
   visionScore?: number;        // 0-100 LLM vision alignment score
   visionReason?: string;
-  llmScore?: number;           // 0-100 LLM quality score
+  llmScore?: number;           // 0-100 LLM quality score (backward compat — maps to ideaScore)
   llmRisk?: 'low' | 'medium' | 'high';
   llmReason?: string;
   duplicateGroup?: number;     // Cluster ID if part of a duplicate group
@@ -79,6 +79,18 @@ export interface ScoredPR extends PRData {
   semanticMatches?: SemanticMatch[];
   holisticRank?: number;
   adjustedScore?: number;
+  /** Idea/fix value score (0-100) — how valuable is the core idea? */
+  ideaScore?: number;
+  /** Why this score for idea value */
+  ideaReason?: string;
+  /** Merge-readiness score (0-100) — how ready is this PR? */
+  readinessScore?: number;
+  /** Hard penalty multiplier applied to readiness */
+  penaltyMultiplier?: number;
+  /** Percentile rank within scored batch */
+  percentileRank?: number;
+  /** Priority tier based on combined scores */
+  tier?: 'critical' | 'high' | 'normal' | 'low';
 }
 
 export type IntentCategory = 'bugfix' | 'feature' | 'refactor' | 'dependency' | 'docs' | 'chore';

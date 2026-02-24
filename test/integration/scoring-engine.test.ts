@@ -77,13 +77,12 @@ describe('ScoringEngine', () => {
       expect(provider.generateTextCalls[0].prompt).toContain('feat: add authentication');
     });
 
-    it('should use exact blend formula: 0.4 * heuristic + 0.6 * LLM', async () => {
+    it('should use dual scoring formula: 0.7 * ideaScore + 0.3 * readinessScore', async () => {
       const provider = new MockLLMProvider();
       provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Test"}';
 
       const engine = new ScoringEngine(provider);
 
-      // Create a PR that should score exactly 100 heuristically
       const pr = createPRData({
         ciStatus: 'success',
         additions: 200,
@@ -97,14 +96,11 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      // Calculate expected weighted heuristic score
-      const heuristicScore = scored.signals.reduce((sum, s) => sum + s.score * s.weight, 0) /
-                            scored.signals.reduce((sum, s) => sum + s.weight, 0);
+      // v0.8: totalScore = 0.7 * ideaScore + 0.3 * readinessScore
+      const expected = Math.round(0.7 * scored.ideaScore! + 0.3 * scored.readinessScore!);
 
-      // Expected: 0.4 * heuristic + 0.6 * 80
-      const expected = Math.round(0.4 * heuristicScore + 0.6 * 80);
-
-      expect(scored.llmScore).toBe(80);
+      expect(scored.ideaScore).toBe(80);
+      expect(scored.llmScore).toBe(80); // backward compat
       expect(scored.totalScore).toBe(expected);
     });
 
@@ -145,12 +141,13 @@ describe('ScoringEngine', () => {
       const results = await engine.scoreMany(prs);
 
       expect(results).toHaveLength(3);
-      expect(results[0].number).toBe(1);
-      expect(results[1].number).toBe(2);
-      expect(results[2].number).toBe(3);
+      // v0.8: scoreMany sorts by totalScore for percentile rank
+      const numbers = results.map(r => r.number).sort();
+      expect(numbers).toEqual([1, 2, 3]);
       results.forEach(pr => {
         expect(pr.totalScore).toBeGreaterThan(0);
         expect(pr.signals.length).toBeGreaterThan(0);
+        expect(pr.percentileRank).toBeDefined();
       });
     });
 
@@ -335,13 +332,13 @@ describe('ScoringEngine', () => {
       const engine = new ScoringEngine();
       const pr = createPRData({
         author: 'new-contributor',
-        authorAssociation: 'FIRST_TIME_CONTRIBUTOR', // 40 base score
+        authorAssociation: 'FIRST_TIME_CONTRIBUTOR', // 25 base score (v0.8)
       });
 
       const scored = await engine.score(pr);
 
       const contributorSignal = scored.signals.find(s => s.name === 'contributor');
-      expect(contributorSignal!.score).toBe(40); // No reputation blend
+      expect(contributorSignal!.score).toBe(25); // No reputation blend
       expect(contributorSignal!.reason).not.toContain('rep:');
     });
 
@@ -391,7 +388,7 @@ describe('ScoringEngine', () => {
   });
 
   describe('Diff-enriched scoring blend', () => {
-    it('uses 0.4/0.3/0.3 blend when diff analysis available', async () => {
+    it('blends ideaScore with diff codeQuality when diff analysis available', async () => {
       const provider = new MockLLMProvider();
       provider.generateTextResponse = '{"score": 80, "risk": "low", "reason": "Good PR"}';
 
@@ -408,16 +405,14 @@ describe('ScoringEngine', () => {
       const pr = createPRData({ number: 1, title: 'fix: improve error handling' });
       const scored = await engine.score(pr);
 
-      // With diff: 0.4 * heuristic + 0.3 * 80 + 0.3 * 90
+      // v0.8: ideaScore = 0.6 * LLM + 0.4 * diffQuality = 0.6 * 80 + 0.4 * 90 = 84
       expect(scored.diffAnalysis).toBeDefined();
       expect(scored.diffAnalysis!.codeQuality).toBe(90);
-      expect(scored.totalScore).toBeGreaterThan(0);
+      expect(scored.ideaScore).toBe(Math.round(0.6 * 80 + 0.4 * 90));
 
-      // Verify blend uses diff: totalScore should differ from 0.4*h + 0.6*80
-      const heuristicScore = scored.signals.reduce((sum, s) => sum + s.score * s.weight, 0) /
-                            scored.signals.reduce((sum, s) => sum + s.weight, 0);
-      const expectedWithDiff = Math.round(0.4 * heuristicScore + 0.3 * 80 + 0.3 * 90);
-      expect(scored.totalScore).toBe(expectedWithDiff);
+      // totalScore = 0.7 * ideaScore + 0.3 * readinessScore
+      const expected = Math.round(0.7 * scored.ideaScore! + 0.3 * scored.readinessScore!);
+      expect(scored.totalScore).toBe(expected);
     });
 
     it('overrides llmRisk from diff riskAssessment', async () => {
@@ -520,17 +515,23 @@ describe('ScoringEngine', () => {
 
       const scored = await engine.score(pr);
 
-      const totalWeight = scored.signals.reduce((sum, s) => sum + s.weight, 0);
+      // Filter out intent signal (weight=0 by design in v0.8)
+      const activeSignals = scored.signals.filter(s => s.name !== 'intent');
+      const totalWeight = activeSignals.reduce((sum, s) => sum + s.weight, 0);
 
       // Total weight can exceed 1.0 — signals are normalized by total weight in score()
       expect(totalWeight).toBeGreaterThan(0.9);
       expect(totalWeight).toBeLessThan(2.0);
 
-      // Each signal should have positive weight
-      scored.signals.forEach(s => {
+      // Each active signal should have positive weight
+      activeSignals.forEach(s => {
         expect(s.weight).toBeGreaterThan(0);
         expect(s.weight).toBeLessThanOrEqual(1);
       });
+
+      // Intent signal should have weight 0 (only affects via profiles)
+      const intentSignal = scored.signals.find(s => s.name === 'intent');
+      expect(intentSignal?.weight).toBe(0);
     });
   });
 });

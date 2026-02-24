@@ -4,6 +4,23 @@ All notable changes to Treliq will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-02-24
+
+### Changed
+- **Scoring v2: Dual scoring system** — `ideaScore` (fikir degeri, LLM-driven) ve `readinessScore` (merge hazirlik, TOPSIS-based) olarak ayristi
+- Scoring formula: `totalScore = 0.7 * ideaScore + 0.3 * readinessScore`
+- LLM prompt completely redesigned for idea value assessment with calibrated rubric
+- TOPSIS replaces weighted average for readiness scoring (evidence: MCDM literature)
+- Neutral/missing signal values now score 0 instead of 30-50
+- Contributor signal weight reduced 0.12 → 0.04 (AI agents can produce excellent PRs)
+- Intent signal removed from scoring formula (only affects weight profiles)
+
+### Added
+- Hard penalty multipliers for CI failure (0.4x), merge conflict (0.5x), spam (0.2x), draft (0.4x), abandoned (0.3x)
+- Tier classification: critical/high/normal/low based on ideaScore + readinessScore
+- Percentile rank normalization in batch scoring
+- `ideaScore`, `ideaReason`, `readinessScore`, `penaltyMultiplier`, `tier`, `percentileRank` fields on ScoredPR
+
 ## [0.7.0] - 2026-02-22
 
 ### Added
@@ -141,6 +158,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Vision document alignment (VISION.md / ROADMAP.md check via LLM)
 - Output formats: table, JSON, markdown, GitHub comment
 
+[0.8.0]: https://github.com/mahsumaktas/treliq/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mahsumaktas/treliq/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mahsumaktas/treliq/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mahsumaktas/treliq/compare/v0.5.0...v0.5.1

@@ -81,7 +81,7 @@ export class ScoringEngine {
     this.diffAnalyses.set(prNumber, analysis);
   }
 
-  /** Score multiple PRs in parallel with concurrency control */
+  /** Score multiple PRs in parallel with concurrency control + percentile rank */
   async scoreMany(prs: PRData[]): Promise<ScoredPR[]> {
     if (prs.length === 0) return [];
     log.info({ count: prs.length, maxConcurrent: this.concurrency.getMaxConcurrent() }, 'Scoring PRs');
@@ -101,12 +101,23 @@ export class ScoringEngine {
       }
     }
     if (failed > 0) log.warn({ failed, total: prs.length }, 'Some PRs failed to score');
+
+    // Percentile rank normalization
+    scored.sort((a, b) => a.totalScore - b.totalScore);
+    for (let i = 0; i < scored.length; i++) {
+      scored[i].percentileRank = scored.length > 1
+        ? Math.round((i / (scored.length - 1)) * 100)
+        : 50;
+    }
+
     return scored;
   }
 
   async score(pr: PRData): Promise<ScoredPR> {
+    // 1. Intent classification
     const intentResult = await this.intentClassifier.classify(pr.title, pr.body ?? '', pr.changedFiles);
 
+    // 2. All 21 signals (4A: missing=0, 4B: contributor weight=0.04, 4C: intent=0)
     const signals: SignalScore[] = [
       this.scoreCI(pr),
       this.scoreDiffSize(pr),
@@ -131,7 +142,7 @@ export class ScoringEngine {
       this.scoreIntent(intentResult),
     ];
 
-    // Apply intent-aware weight profiles
+    // 3. Intent profile weight overrides + normalization
     const profile = INTENT_PROFILES[intentResult.intent];
     if (profile) {
       for (const signal of signals) {
@@ -149,46 +160,59 @@ export class ScoringEngine {
       }
     }
 
-    const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
-    const heuristicScore = totalWeight > 0
-      ? signals.reduce((sum, s) => sum + s.score * s.weight, 0) / totalWeight
-      : 0;
+    // 4. TOPSIS readiness score
+    const topsisScore = this.calculateTOPSIS(signals);
 
+    // 5. Spam detection
     const spamSignal = signals.find(s => s.name === 'spam');
     const isSpam = (spamSignal?.score ?? 100) < 25;
 
-    // LLM scoring
-    let llmScore: number | undefined;
+    // 6. Hard penalties on readiness
+    let penaltyMultiplier = 1.0;
+    if (pr.ciStatus === 'failure') penaltyMultiplier *= 0.4;
+    if (pr.mergeable === 'conflicting') penaltyMultiplier *= 0.5;
+    if (isSpam) penaltyMultiplier *= 0.2;
+    if (pr.isDraft) penaltyMultiplier *= 0.4;
+    const isAbandoned = pr.ageInDays > 180 && pr.commentCount <= 1 && pr.reviewState === 'none';
+    if (isAbandoned) penaltyMultiplier *= 0.3;
+    const readinessScore = Math.round(Math.max(0, Math.min(100, topsisScore * penaltyMultiplier)));
+
+    // 7. LLM idea scoring
+    let ideaScore: number | undefined;
+    let ideaReason: string | undefined;
     let llmRisk: 'low' | 'medium' | 'high' | undefined;
-    let llmReason: string | undefined;
 
     if (this.provider) {
       try {
         const llmResult = await this.scoreLLM(pr);
-        llmScore = llmResult.score;
+        ideaScore = llmResult.score;
+        ideaReason = llmResult.reason;
         llmRisk = llmResult.risk;
-        llmReason = llmResult.reason;
       } catch (err: any) {
-        llmReason = `LLM failed: ${err.message}`;
+        ideaReason = `LLM failed: ${err.message}`;
         log.warn({ pr: pr.number, err }, 'LLM scoring failed');
       }
     }
 
-    // Blend: new formula when diff available
+    // 8. Diff analysis bonus (if available)
     const diffAnalysis = this.diffAnalyses.get(pr.number);
-    let totalScore: number;
-    if (llmScore !== undefined && diffAnalysis) {
-      // 0.4 heuristic + 0.3 LLM text + 0.3 LLM diff
-      totalScore = Math.round(0.4 * heuristicScore + 0.3 * llmScore + 0.3 * diffAnalysis.codeQuality);
-      // Override risk from diff (more reliable)
+    if (diffAnalysis && ideaScore !== undefined) {
+      ideaScore = Math.round(0.6 * ideaScore + 0.4 * diffAnalysis.codeQuality);
       if (diffAnalysis.riskAssessment !== 'medium') {
         llmRisk = diffAnalysis.riskAssessment === 'critical' ? 'high' : diffAnalysis.riskAssessment;
       }
-    } else if (llmScore !== undefined) {
-      totalScore = Math.round(0.4 * heuristicScore + 0.6 * llmScore);
-    } else {
-      totalScore = Math.round(heuristicScore);
     }
+
+    // 9. Combined total score
+    let totalScore: number;
+    if (ideaScore !== undefined) {
+      totalScore = Math.round(0.7 * ideaScore + 0.3 * readinessScore);
+    } else {
+      totalScore = readinessScore; // no LLM = readiness only
+    }
+
+    // 10. Tier classification
+    const tier = this.assignTier(ideaScore ?? readinessScore, readinessScore);
 
     return {
       ...pr,
@@ -197,19 +221,76 @@ export class ScoringEngine {
       isSpam,
       spamReasons: isSpam ? [spamSignal?.reason ?? 'Low quality'] : [],
       visionAlignment: 'unchecked',
-      llmScore,
+      // backward compat
+      llmScore: ideaScore,
       llmRisk,
-      llmReason,
+      llmReason: ideaReason,
       intent: intentResult.intent,
       diffAnalysis,
+      // v0.8 dual scoring
+      ideaScore,
+      ideaReason,
+      readinessScore,
+      penaltyMultiplier,
+      tier,
     };
+  }
+
+  /** TOPSIS — distance to ideal/anti-ideal for natural score spread */
+  private calculateTOPSIS(signals: SignalScore[]): number {
+    const active = signals.filter(s => s.weight > 0);
+    if (active.length === 0) return 0;
+
+    // Weighted normalized values
+    const weighted = active.map(s => (s.score / 100) * s.weight);
+    const weights = active.map(s => s.weight);
+
+    // Distance to ideal (all signals = 100)
+    const dPlus = Math.sqrt(
+      weighted.reduce((sum, v, i) => sum + Math.pow(weights[i] - v, 2), 0)
+    );
+    // Distance to anti-ideal (all signals = 0)
+    const dMinus = Math.sqrt(
+      weighted.reduce((sum, v) => sum + Math.pow(v, 2), 0)
+    );
+
+    if (dPlus + dMinus === 0) return 0;
+    return (dMinus / (dPlus + dMinus)) * 100;
+  }
+
+  /** Assign priority tier based on ideaScore + readinessScore */
+  private assignTier(ideaScore: number, readinessScore: number): 'critical' | 'high' | 'normal' | 'low' {
+    if (ideaScore >= 80 && readinessScore >= 60) return 'critical';
+    if (ideaScore >= 70) return 'high';
+    if (ideaScore >= 45) return 'normal';
+    return 'low';
   }
 
   private async scoreLLM(pr: PRData): Promise<{ score: number; risk: 'low' | 'medium' | 'high'; reason: string }> {
     const filesStr = pr.changedFiles.slice(0, 30).join(', ');
     const input = `Title: ${pr.title}\nBody: ${(pr.body ?? '').slice(0, 2000)}\nFiles: ${filesStr}`.slice(0, 4000);
 
-    const prompt = `Rate this GitHub PR on practical value and merge-readiness (0-100). Focus on: Does it solve a real problem? Is the implementation correct and complete? Would merging it improve the project? Ignore whether AI/LLM was used to write it — only judge the end result. Return JSON: {"score": <number>, "risk": "low"|"medium"|"high", "reason": "<brief>"}\nRisk means: would merging this PR cause issues (breaking changes, bugs, security)?\n${input}`;
+    const prompt = `Evaluate the IDEA VALUE of this PR — how valuable is the problem it solves and the approach it takes? Score the IDEA, not the PR quality.
+
+A brilliant fix with poor tests still has high idea value.
+A polished PR fixing a typo has low idea value.
+
+Rubric (use the FULL range):
+  90-100: Critical fix for a real production problem (security, data loss, crash)
+  75-89: Valuable improvement solving a genuine pain point
+  50-74: Useful but routine fix or minor enhancement
+  25-49: Low-value change (cosmetic, trivial, or unnecessary)
+  0-24: No practical value (spam, duplicate, or harmful)
+
+Consider:
+- Does this solve a REAL problem users/developers face?
+- Is the approach/idea sound (even if implementation is rough)?
+- Would YOU want this change in your codebase?
+- Is this a novel insight or a copy of an obvious pattern?
+
+Return JSON: {"score": <0-100>, "risk": "low"|"medium"|"high", "reason": "<1 sentence: what makes this valuable or not>"}
+
+${input}`;
 
     const text = await this.provider!.generateText(prompt, { temperature: 0.1, maxTokens: 200 });
 
@@ -230,7 +311,7 @@ export class ScoringEngine {
   // --- Original 13 signals (weights adjusted for 18-signal total) ---
 
   private scoreCI(pr: PRData): SignalScore {
-    const scoreMap = { success: 100, pending: 50, failure: 10, unknown: 40 };
+    const scoreMap = { success: 100, pending: 50, failure: 10, unknown: 0 };
     return { name: 'ci_status', score: scoreMap[pr.ciStatus], weight: 0.15, reason: `CI: ${pr.ciStatus}` };
   }
 
@@ -253,7 +334,7 @@ export class ScoringEngine {
   private scoreContributor(pr: PRData): SignalScore {
     const trustMap: Record<string, number> = {
       OWNER: 100, MEMBER: 90, COLLABORATOR: 85, CONTRIBUTOR: 70,
-      FIRST_TIMER: 40, FIRST_TIME_CONTRIBUTOR: 40, NONE: 30,
+      FIRST_TIMER: 25, FIRST_TIME_CONTRIBUTOR: 25, NONE: 15,
     };
     let assocScore = trustMap[pr.authorAssociation] ?? 50;
     const repScore = this.reputationScores.get(pr.author);
@@ -261,12 +342,12 @@ export class ScoringEngine {
       ? Math.round(0.7 * assocScore + 0.3 * repScore)
       : assocScore;
     const repInfo = repScore !== undefined ? `, rep: ${repScore}` : '';
-    return { name: 'contributor', score, weight: 0.12, reason: `${pr.author} (${pr.authorAssociation}${repInfo})` };
+    return { name: 'contributor', score, weight: 0.04, reason: `${pr.author} (${pr.authorAssociation}${repInfo})` };
   }
 
   private scoreIssueRef(pr: PRData): SignalScore {
     return {
-      name: 'issue_ref', score: pr.hasIssueRef ? 90 : 30, weight: 0.07,
+      name: 'issue_ref', score: pr.hasIssueRef ? 90 : 0, weight: 0.07,
       reason: pr.hasIssueRef ? `References: ${pr.issueNumbers.map(n => `#${n}`).join(', ')}` : 'No issue reference',
     };
   }
@@ -359,7 +440,7 @@ export class ScoringEngine {
 
   private scoreReviewStatus(pr: PRData): SignalScore {
     const stateScores: Record<string, number> = {
-      approved: 100, changes_requested: 30, commented: 60, none: 40,
+      approved: 100, changes_requested: 30, commented: 60, none: 0,
     };
     let score = stateScores[pr.reviewState] ?? 40;
     if (pr.reviewCount >= 2) score = Math.min(100, score + 10);
@@ -383,7 +464,7 @@ export class ScoringEngine {
     if (pr.commentCount >= 5) score = 90;
     else if (pr.commentCount >= 2) score = 70;
     else if (pr.commentCount === 1) score = 50;
-    else score = 30;
+    else score = 0;
     return { name: 'activity', score, weight: 0.04, reason: `${pr.commentCount} comments` };
   }
 
@@ -429,7 +510,7 @@ export class ScoringEngine {
   private scoreMilestone(pr: PRData): SignalScore {
     return {
       name: 'milestone',
-      score: pr.milestone ? 90 : 40,
+      score: pr.milestone ? 90 : 0,
       weight: 0.07,
       reason: pr.milestone ? `Milestone: ${pr.milestone}` : 'No milestone attached',
     };
@@ -446,12 +527,12 @@ export class ScoringEngine {
     if (labels.some(l => lowLabels.some(h => l.includes(h)))) {
       return { name: 'label_priority', score: 30, weight: 0.08, reason: `Low priority labels: ${pr.labels.join(', ')}` };
     }
-    return { name: 'label_priority', score: 50, weight: 0.05, reason: pr.labels.length > 0 ? `Labels: ${pr.labels.join(', ')}` : 'No priority labels' };
+    return { name: 'label_priority', score: 0, weight: 0.05, reason: pr.labels.length > 0 ? `Labels: ${pr.labels.join(', ')}` : 'No priority labels' };
   }
 
   private scoreCodeowners(pr: PRData): SignalScore {
     if (pr.codeowners.length === 0) {
-      return { name: 'codeowners', score: 40, weight: 0.05, reason: 'No CODEOWNERS match' };
+      return { name: 'codeowners', score: 0, weight: 0.05, reason: 'No CODEOWNERS match' };
     }
     const authorIsOwner = pr.codeowners.includes(pr.author);
     return {
@@ -467,7 +548,7 @@ export class ScoringEngine {
   private scoreRequestedReviewers(pr: PRData): SignalScore {
     return {
       name: 'requested_reviewers',
-      score: pr.requestedReviewers.length > 0 ? 80 : 40,
+      score: pr.requestedReviewers.length > 0 ? 80 : 0,
       weight: 0.05,
       reason: pr.requestedReviewers.length > 0
         ? `${pr.requestedReviewers.length} reviewer(s): ${pr.requestedReviewers.slice(0, 3).join(', ')}`
@@ -523,13 +604,11 @@ export class ScoringEngine {
   }
 
   private scoreIntent(result: IntentResult): SignalScore {
-    const scores: Record<string, number> = {
-      bugfix: 90, feature: 85, refactor: 60, dependency: 35, docs: 30, chore: 25,
-    };
+    // Intent only affects scoring via INTENT_PROFILES weight overrides, not its own score
     return {
       name: 'intent',
-      score: scores[result.intent] ?? 50,
-      weight: 0.15,
+      score: 0,
+      weight: 0,
       reason: `${result.intent} (${result.reason})`,
     };
   }
