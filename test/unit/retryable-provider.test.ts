@@ -1,5 +1,5 @@
 import { RetryableProvider } from '../../src/core/retryable-provider';
-import { MockLLMProvider, checklistResponse } from '../fixtures/mock-provider';
+import { MockLLMProvider, dualChecklistResponse } from '../fixtures/mock-provider';
 
 describe('RetryableProvider', () => {
   let mock: MockLLMProvider;
@@ -20,7 +20,7 @@ describe('RetryableProvider', () => {
   it('delegates generateText to inner provider', async () => {
     const provider = new RetryableProvider(mock);
     const result = await provider.generateText('hello');
-    expect(result).toBe(checklistResponse(11, 'low', 'Mock LLM response'));
+    expect(result).toBe(dualChecklistResponse(7, 4, 'low', 'Mock LLM response', 12));
     expect(mock.generateTextCalls).toHaveLength(1);
   });
 

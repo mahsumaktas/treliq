@@ -12,7 +12,7 @@
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/v/treliq?style=flat-square&color=CB3837&logo=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/treliq"><img src="https://img.shields.io/npm/dm/treliq?style=flat-square&color=CB3837" alt="npm downloads" /></a>
   <a href="https://github.com/mahsumaktas/treliq/actions"><img src="https://img.shields.io/github/actions/workflow/status/mahsumaktas/treliq/ci.yml?branch=main&style=flat-square" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/tests-383_passing-2DA44E?style=flat-square" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-428_passing-2DA44E?style=flat-square" alt="Tests" />
   <img src="https://img.shields.io/badge/signals-21-8B5CF6?style=flat-square" alt="21 Signals" />
   <img src="https://img.shields.io/badge/providers-4-FF6600?style=flat-square" alt="4 Providers" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT" /></a>
@@ -105,7 +105,7 @@ Three independent dimensions replace the single LLM score:
 | `readinessScore` | `number` | Merge readiness (0-100, TOPSIS) |
 | `tier` | `string` | Priority tier (critical/high/normal/low) |
 
-### Test Suite (383 tests, 28 suites)
+### Test Suite (428 tests, 28 suites)
 - 17 new tests: cascade pipeline (8), readyToSteal (4), scoredBy (2), cascade integration (3)
 - 125/125 scoring-specific tests passing
 
