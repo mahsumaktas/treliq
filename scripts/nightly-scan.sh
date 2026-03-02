@@ -19,7 +19,7 @@ TIMEOUT_CMD="timeout"
 command -v gtimeout &>/dev/null && TIMEOUT_CMD="gtimeout"
 command -v $TIMEOUT_CMD &>/dev/null || TIMEOUT_CMD=""
 
-${TIMEOUT_CMD:+$TIMEOUT_CMD 14400} npx tsx bulk-score-openclaw.ts \
+${TIMEOUT_CMD:+$TIMEOUT_CMD 14400} npx tsx scripts/bulk-score.ts \
   --nightly \
   --limit 500 \
   --sort newest \

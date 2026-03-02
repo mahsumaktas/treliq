@@ -8,3 +8,4 @@ data/
 .treliq-cache.json
 .treliq.yaml
 results/
+coverage/

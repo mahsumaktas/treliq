@@ -4,6 +4,31 @@ All notable changes to Treliq will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] - 2026-03-02
+
+### Changed
+- **README rewritten** — 700 lines reduced to ~220. Quick Start moved from line 392 to line 30.
+- Signal details, API docs, and architecture diagram extracted to dedicated files under `docs/`.
+- Utility scripts moved from root to `scripts/` and renamed to generic names.
+- `CONTRIBUTING.md` updated with correct project structure.
+- `package.json` description and keywords updated to include issue triage.
+
+### Fixed
+- **XSS vulnerability** in `docs/index.html` — replaced with XSS-protected dashboard copy.
+- Daily report workflow now skips issue creation when 0 PRs are open.
+- PR signal weight table corrected (contributor trust: 0.04, not 0.12).
+- `nightly-scan.sh` path updated after script relocation.
+
+### Removed
+- Stale release notes, marketing templates, and completed plan documents.
+- Root `logo.png` duplicate (kept `docs/logo.png`).
+
+### Housekeeping
+- 8 empty daily report issues closed, 2 already-implemented issues closed.
+- 6 outdated milestones (v0.5.1–v0.5.6) closed.
+- `.gitignore` now includes `coverage/`.
+- GitHub topics updated: added `cli`, `npm-package`.
+
 ## [0.8.0] - 2026-02-24
 
 ### Added
@@ -178,6 +203,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). This p
 - Vision document alignment (VISION.md / ROADMAP.md check via LLM)
 - Output formats: table, JSON, markdown, GitHub comment
 
+[0.8.1]: https://github.com/mahsumaktas/treliq/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mahsumaktas/treliq/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/mahsumaktas/treliq/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mahsumaktas/treliq/compare/v0.5.1...v0.6.0

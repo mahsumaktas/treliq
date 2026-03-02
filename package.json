@@ -1,7 +1,7 @@
 {
   "name": "treliq",
-  "version": "0.8.0",
-  "description": "AI-Powered PR Triage for Open Source Maintainers",
+  "version": "0.8.1",
+  "description": "AI-Powered PR & Issue Triage for Open Source Maintainers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -27,7 +27,7 @@
     "test": "jest",
     "lint": "eslint src/",
     "start": "node dist/index.js",
-    "dashboard": "npx tsx src/cli.ts scan -r openclaw/openclaw -m 50 -f json > dashboard/demo.json"
+    "dashboard": "npx tsx src/cli.ts scan -r owner/repo -m 50 -f json > dashboard/demo.json"
   },
   "homepage": "https://mahsumaktas.github.io/treliq/",
   "bugs": {
@@ -35,7 +35,11 @@
   },
   "keywords": [
     "pr-triage",
+    "issue-triage",
+    "duplicate-detection",
     "github",
+    "github-action",
+    "cli",
     "ai",
     "dedup",
     "scoring",

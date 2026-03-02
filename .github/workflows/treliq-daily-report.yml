@@ -23,20 +23,33 @@ jobs:
       - name: Install Treliq
         run: npm install -g treliq@latest
       
+      - name: Check open PR count
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          PR_COUNT=$(gh pr list -R "$GH_REPO" --state open --json number --jq 'length')
+          echo "pr_count=$PR_COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$PR_COUNT" -eq 0 ]; then
+            echo "No open PRs — skipping report."
+          fi
+
       - name: Generate PR Triage Report
+        if: steps.check.outputs.pr_count != '0'
         id: triage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Required for LLM qualitative scoring and embedding deduplication
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SCAN_REPO: ${{ github.repository }}
         run: |
-          # Scan up to 50 open PRs, output as markdown
-          REPORT=$(treliq scan -r ${{ github.repository }} -m 50 -f markdown)
-          echo "REPORT<<EOF" >> $GITHUB_OUTPUT
-          echo "$REPORT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          REPORT=$(treliq scan -r "$SCAN_REPO" -m 50 -f markdown)
+          echo "REPORT<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REPORT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Post Daily Triage Issue
+        if: steps.check.outputs.pr_count != '0'
         uses: actions/github-script@v7
         env:
           REPORT_BODY: ${{ steps.triage.outputs.REPORT }}
